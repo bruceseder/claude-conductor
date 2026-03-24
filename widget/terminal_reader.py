@@ -1,0 +1,129 @@
+"""Read terminal text from Windows Terminal windows via UI Automation."""
+
+import comtypes
+import comtypes.client
+
+# Initialize UI Automation COM
+comtypes.client.GetModule('UIAutomationCore.dll')
+from comtypes.gen.UIAutomationClient import (
+    CUIAutomation, IUIAutomation, IUIAutomationTextPattern,
+    UIA_TextPatternId,
+)
+
+_uia = None
+
+
+def _get_uia():
+    global _uia
+    if _uia is None:
+        _uia = comtypes.CoCreateInstance(
+            CUIAutomation._reg_clsid_,
+            interface=IUIAutomation,
+            clsctx=comtypes.CLSCTX_INPROC_SERVER,
+        )
+    return _uia
+
+
+def get_terminal_lines(hwnd, last_n=15):
+    """Extract the last N lines of visible text from a Windows Terminal window.
+
+    Returns a list of strings, or None if text can't be read.
+    """
+    try:
+        uia = _get_uia()
+        el = uia.ElementFromHandle(hwnd)
+        walker = uia.ControlViewWalker
+
+        # Recursively find the TermControl element
+        tc = _find_term_control(walker, el, depth=0)
+        if not tc:
+            return None
+
+        tp = tc.GetCurrentPattern(UIA_TextPatternId)
+        if not tp:
+            return None
+
+        text_pattern = tp.QueryInterface(IUIAutomationTextPattern)
+        doc = text_pattern.DocumentRange
+        # Read a large chunk — terminal buffers can be 50k+ chars
+        # GetText reads from the START, so we need enough to reach the end
+        text = doc.GetText(200000)
+        lines = text.strip().split('\n')
+        return lines[-last_n:]
+    except Exception:
+        return None
+
+
+def _find_term_control(walker, element, depth):
+    """Walk the UIA tree to find the TermControl element."""
+    if depth > 6:
+        return None
+    child = walker.GetFirstChildElement(element)
+    count = 0
+    while child and count < 15:
+        try:
+            cname = child.CurrentClassName or ''
+            if cname == 'TermControl':
+                return child
+            result = _find_term_control(walker, child, depth + 1)
+            if result:
+                return result
+        except Exception:
+            pass
+        child = walker.GetNextSiblingElement(child)
+        count += 1
+    return None
+
+
+# --- Attention State Detection ---
+
+# The most reliable indicator of Claude Code's choice UI is
+# "Esc to cancel" in the footer. We use that plus other patterns.
+# All checked against stripped lowercase text.
+CHOICE_PATTERNS = [
+    'esc to cancel',             # Claude Code choice UI footer (MOST RELIABLE)
+    '(y/n)',                     # Yes/no confirmation
+    '(yes/no)',                  # Yes/no confirmation
+    'do you want to proceed',   # Permission prompt
+]
+
+
+def detect_attention_type(hwnd):
+    """Determine what kind of attention a terminal window needs.
+
+    Strategy: check the last 8 lines for choice and idle patterns.
+    - If choice patterns found → 'choice' (orange)
+    - If idle indicators found (● or >) → 'idle' (green)
+    - If NEITHER found → 'choice' (orange) because it's likely a TUI
+      prompt (permission, tool approval) that isn't in the text buffer
+
+    Returns:
+        'choice'  - Claude is asking a question or needs approval
+        'idle'    - Claude is done, waiting for next instruction
+        None      - Could not determine
+    """
+    lines = get_terminal_lines(hwnd, last_n=30)
+    if not lines:
+        return None
+
+    recent = [line.strip() for line in lines[-8:] if line.strip()]
+    recent_lower = [s.lower() for s in recent]
+    recent_text = '\n'.join(recent_lower)
+
+    # Check for choice patterns
+    for pattern in CHOICE_PATTERNS:
+        if pattern in recent_text:
+            return 'choice'
+
+    # Check for idle indicators: bare ● or > prompt
+    for s in recent:
+        if s == '\u25cf' or s == '●':
+            return 'idle'
+        if s.startswith('\u25cf ') or s.startswith('● '):
+            return 'idle'
+        if s == '>' or s == '> ':
+            return 'idle'
+
+    # No clear signal — likely a TUI prompt we can't read (permission, etc.)
+    # Default to choice so the user gets alerted
+    return 'choice'
