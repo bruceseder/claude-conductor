@@ -114,16 +114,32 @@ def detect_attention_type(hwnd):
         if pattern in choice_text:
             return 'choice'
 
-    # Wider window for idle detection (● or > may be above recent output)
+    # Check the LAST non-empty line specifically.
+    # A bare "●" or bare ">" = definitely idle (Claude's prompt).
+    # A "● text..." = Claude was mid-output when a TUI overlay may have
+    # appeared — NOT a reliable idle signal, so skip it.
+    last_nonempty = None
+    for line in reversed(lines):
+        s = line.strip()
+        if s:
+            last_nonempty = s
+            break
+
+    if last_nonempty:
+        # Bare ● or bare > = definitely idle
+        if last_nonempty == '\u25cf' or last_nonempty == '●':
+            return 'idle'
+        if last_nonempty == '>' or last_nonempty == '> ':
+            return 'idle'
+
+    # Wider window for idle — only match bare ● or bare > (not ● with text)
     idle_lines = [line.strip() for line in lines[-20:] if line.strip()]
 
     for s in idle_lines:
         if s == '\u25cf' or s == '●':
             return 'idle'
-        if s.startswith('\u25cf ') or s.startswith('● '):
-            return 'idle'
         if s == '>' or s == '> ':
             return 'idle'
 
-    # No clear signal — likely a TUI prompt we can't read
+    # No clear idle signal — likely a TUI prompt we can't read
     return 'choice'
