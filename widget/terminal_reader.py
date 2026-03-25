@@ -132,7 +132,7 @@ def detect_attention_type(hwnd):
         if last_nonempty == '>' or last_nonempty == '> ':
             return 'idle'
 
-    # Wider window for idle — only match bare ● or bare > (not ● with text)
+    # Wider window for idle — only bare ● or bare > count (not ● with text)
     idle_lines = [line.strip() for line in lines[-20:] if line.strip()]
 
     for s in idle_lines:
@@ -140,6 +140,23 @@ def detect_attention_type(hwnd):
             return 'idle'
         if s == '>' or s == '> ':
             return 'idle'
+
+    # Check if a bare > prompt exists AFTER the last ● in the raw buffer.
+    # When Claude finishes, the sequence is: ● output... then bare > prompt.
+    # The > might be between empty lines in the raw buffer.
+    last_bullet_idx = -1
+    for i in range(len(lines) - 1, -1, -1):
+        s = lines[i].strip()
+        if s.startswith('\u25cf') or s.startswith('●'):
+            last_bullet_idx = i
+            break
+
+    if last_bullet_idx >= 0:
+        # Look for bare > prompt after the last ● line
+        for i in range(last_bullet_idx + 1, len(lines)):
+            s = lines[i].strip()
+            if s == '>' or s == '> ':
+                return 'idle'
 
     # No clear idle signal — likely a TUI prompt we can't read
     return 'choice'
