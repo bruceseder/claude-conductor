@@ -106,8 +106,8 @@ def detect_attention_type(hwnd):
     if not lines:
         return None
 
-    # Tight window for choice detection (avoids stale prompts)
-    choice_lines = [line.strip().lower() for line in lines[-8:] if line.strip()]
+    # Check last 10 lines for choice patterns
+    choice_lines = [line.strip().lower() for line in lines[-10:] if line.strip()]
     choice_text = '\n'.join(choice_lines)
 
     for pattern in CHOICE_PATTERNS:
