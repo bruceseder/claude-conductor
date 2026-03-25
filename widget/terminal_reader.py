@@ -91,11 +91,11 @@ CHOICE_PATTERNS = [
 def detect_attention_type(hwnd):
     """Determine what kind of attention a terminal window needs.
 
-    Strategy: check the last 8 lines for choice and idle patterns.
-    - If choice patterns found → 'choice' (orange)
-    - If idle indicators found (● or >) → 'idle' (green)
-    - If NEITHER found → 'choice' (orange) because it's likely a TUI
-      prompt (permission, tool approval) that isn't in the text buffer
+    Strategy:
+    - Check last 8 lines for choice patterns (tight window, avoids stale matches)
+    - Check last 20 lines for idle indicators (wider window, ● and > may be
+      above recent output like diffs or tables)
+    - If neither found → 'choice' (likely a TUI prompt we can't read)
 
     Returns:
         'choice'  - Claude is asking a question or needs approval
@@ -106,17 +106,18 @@ def detect_attention_type(hwnd):
     if not lines:
         return None
 
-    recent = [line.strip() for line in lines[-8:] if line.strip()]
-    recent_lower = [s.lower() for s in recent]
-    recent_text = '\n'.join(recent_lower)
+    # Tight window for choice detection (avoids stale prompts)
+    choice_lines = [line.strip().lower() for line in lines[-8:] if line.strip()]
+    choice_text = '\n'.join(choice_lines)
 
-    # Check for choice patterns
     for pattern in CHOICE_PATTERNS:
-        if pattern in recent_text:
+        if pattern in choice_text:
             return 'choice'
 
-    # Check for idle indicators: bare ● or > prompt
-    for s in recent:
+    # Wider window for idle detection (● or > may be above recent output)
+    idle_lines = [line.strip() for line in lines[-20:] if line.strip()]
+
+    for s in idle_lines:
         if s == '\u25cf' or s == '●':
             return 'idle'
         if s.startswith('\u25cf ') or s.startswith('● '):
@@ -124,6 +125,5 @@ def detect_attention_type(hwnd):
         if s == '>' or s == '> ':
             return 'idle'
 
-    # No clear signal — likely a TUI prompt we can't read (permission, etc.)
-    # Default to choice so the user gets alerted
+    # No clear signal — likely a TUI prompt we can't read
     return 'choice'
