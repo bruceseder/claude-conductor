@@ -45,9 +45,8 @@ def get_terminal_lines(hwnd, last_n=15):
 
         text_pattern = tp.QueryInterface(IUIAutomationTextPattern)
         doc = text_pattern.DocumentRange
-        # Read a large chunk — terminal buffers can be 50k+ chars
-        # GetText reads from the START, so we need enough to reach the end
-        text = doc.GetText(200000)
+        # Read the full buffer (-1 = unlimited, typically < 1MB, ~10ms)
+        text = doc.GetText(-1)
         lines = text.strip().split('\n')
         return lines[-last_n:]
     except Exception:
