@@ -86,7 +86,7 @@ class PowerWidget(tk.Toplevel):
         bar.bind('<B1-Motion>', self._on_drag)
 
         # Icon + title
-        lbl = tk.Label(bar, text=" \u26A1 Power Widget", font=self._font_bold,
+        lbl = tk.Label(bar, text=" \u26A1 Claude Conductor", font=self._font_bold,
                         bg=cfg.BG_SECONDARY, fg=cfg.ACCENT_COLOR, anchor='w')
         lbl.pack(side='left', padx=(8, 0), fill='y')
         lbl.bind('<Button-1>', self._start_drag)

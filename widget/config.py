@@ -1,7 +1,7 @@
 # Window detection
 WINDOW_CLASSES = ["CASCADIA_HOSTING_WINDOW_CLASS", "ConsoleWindowClass"]
 TITLE_KEYWORDS = ["claude", "powershell", "pwsh", "bash", "cmd"]
-TITLE_EXCLUDE = ["power-widget", "Power Widget"]
+TITLE_EXCLUDE = ["power-widget", "Power Widget", "Claude Conductor"]
 
 # UI Theme (dark, terminal aesthetic)
 BG_COLOR = "#1e1e2e"
