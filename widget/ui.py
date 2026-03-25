@@ -1,9 +1,13 @@
+import json
 import math
+import os
 import tkinter as tk
 from tkinter import font as tkfont
 
 from . import config as cfg
 from .utils import lerp_color, set_window_border_color, reset_window_border_color
+
+_NICKNAMES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'nicknames.json')
 
 
 class PowerWidget(tk.Toplevel):
@@ -31,6 +35,11 @@ class PowerWidget(tk.Toplevel):
         self._border_pulsing = set()  # hwnds with active border pulse
         self._last_border_color = {}  # hwnd -> last hex color sent to DWM
         self._border_frame_count = 0
+
+        self._nicknames = {}       # hwnd -> custom name (session)
+        self._title_nicknames = {}  # display_title -> custom name (persisted)
+        self._editing_hwnd = None   # hwnd currently being renamed
+        self._load_nicknames()
 
         self._setup_window()
         self._setup_fonts()
@@ -326,6 +335,10 @@ class PowerWidget(tk.Toplevel):
     # --- Public API ---
     def update_window_list(self, windows):
         """Rebuild the window list with current windows."""
+        # Don't rebuild while user is renaming a window
+        if self._editing_hwnd is not None:
+            return
+
         # Clear existing rows
         for w in self._inner_frame.winfo_children():
             w.destroy()
@@ -365,8 +378,10 @@ class PowerWidget(tk.Toplevel):
             dot.pack(side='left', padx=(8, 4), pady=0)
             dot_oval = dot.create_oval(2, 2, 10, 10, fill=base_color, outline='')
 
-            # Title
-            title = win.display_title or win.title
+            # Title (use nickname if set)
+            raw_title = win.display_title or win.title
+            nickname = self._get_nickname(win.hwnd, raw_title)
+            title = nickname or raw_title
             if len(title) > 38:
                 title = title[:36] + "\u2026"
 
@@ -394,10 +409,17 @@ class PowerWidget(tk.Toplevel):
                                    bg=cfg.BG_COLOR, fg=cfg.FG_DIM)
                 num_lbl.pack(side='right', padx=(0, 6))
 
-            # Bind click to focus
+            # Bind click to focus (label uses delayed click so double-click can rename)
             hwnd = win.hwnd
-            for widget in [row, lbl, dot]:
+            raw_t = raw_title
+            for widget in [row, dot]:
                 widget.bind('<Button-1>', lambda e, h=hwnd: self._on_focus(h))
+
+            lbl.bind('<Button-1>', lambda e, h=hwnd: self._on_focus(h))
+
+            # Right-click to rename
+            raw_t = raw_title
+            lbl.bind('<Button-3>', lambda e, h=hwnd, dt=raw_t, r=row, l=lbl: self._start_rename(h, dt, r, l))
 
             # Hover only for non-attention rows (attention rows pulse instead)
             if not win.needs_attention:
@@ -523,3 +545,75 @@ class PowerWidget(tk.Toplevel):
         windows = windows_getter()
         if index < len(windows):
             self._on_focus(windows[index].hwnd)
+
+    # --- Nickname Management ---
+    def _load_nicknames(self):
+        try:
+            with open(_NICKNAMES_FILE, 'r') as f:
+                self._title_nicknames = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self._title_nicknames = {}
+
+    def _save_nicknames(self):
+        try:
+            with open(_NICKNAMES_FILE, 'w') as f:
+                json.dump(self._title_nicknames, f, indent=2)
+        except OSError:
+            pass
+
+    def _get_nickname(self, hwnd, display_title):
+        """Return nickname for a window, checking hwnd first then persisted title map."""
+        if hwnd in self._nicknames:
+            return self._nicknames[hwnd]
+        if display_title in self._title_nicknames:
+            # Restore from persisted map
+            nick = self._title_nicknames[display_title]
+            self._nicknames[hwnd] = nick
+            return nick
+        return None
+
+    def _start_rename(self, hwnd, display_title, row, lbl):
+        """Replace the title label with an Entry for inline editing."""
+        if self._editing_hwnd is not None:
+            return
+        self._editing_hwnd = hwnd
+
+        current = self._get_nickname(hwnd, display_title) or display_title
+        lbl.pack_forget()
+
+        entry = tk.Entry(row, font=self._font, bg=cfg.BUTTON_BG, fg=cfg.FG_COLOR,
+                         insertbackground=cfg.FG_COLOR, relief='flat',
+                         selectbackground=cfg.ACCENT_COLOR)
+        entry.insert(0, current)
+        entry.select_range(0, 'end')
+        entry.pack(side='left', fill='x', expand=True, padx=(0, 4))
+        entry.focus_set()
+
+        def finish(event=None):
+            new_name = entry.get().strip()
+            entry.destroy()
+            lbl.pack(side='left', fill='x', expand=True, padx=(0, 4))
+            self._editing_hwnd = None
+
+            if new_name and new_name != display_title:
+                self._nicknames[hwnd] = new_name
+                self._title_nicknames[display_title] = new_name
+                self._save_nicknames()
+                nick_display = new_name if len(new_name) <= 38 else new_name[:36] + "\u2026"
+                lbl.configure(text=nick_display)
+            elif not new_name or new_name == display_title:
+                # Clear nickname
+                self._nicknames.pop(hwnd, None)
+                self._title_nicknames.pop(display_title, None)
+                self._save_nicknames()
+                title_display = display_title if len(display_title) <= 38 else display_title[:36] + "\u2026"
+                lbl.configure(text=title_display)
+
+        def cancel(event=None):
+            entry.destroy()
+            lbl.pack(side='left', fill='x', expand=True, padx=(0, 4))
+            self._editing_hwnd = None
+
+        entry.bind('<Return>', finish)
+        entry.bind('<Escape>', cancel)
+        entry.bind('<FocusOut>', finish)

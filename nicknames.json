@@ -1,0 +1,6 @@
+{
+  "kalshi-prediction-market-integration": "ATLAS",
+  "Add naming feature for terminal windows": "Conductor",
+  "Fix batch creation payload size limit": "Data-Pulse",
+  "Fix email verification crash with caching": "Logistics"
+}
