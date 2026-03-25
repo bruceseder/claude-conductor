@@ -4,7 +4,7 @@ import win32con
 import win32process
 import pywintypes
 
-from .config import WINDOW_CLASSES, TITLE_KEYWORDS, TITLE_EXCLUDE
+from .config import WINDOW_CLASSES, TITLE_KEYWORDS, TITLE_EXCLUDE, CLASS_EXCLUDE
 from .utils import clean_title, is_claude_window, has_spinner, force_set_foreground
 from .terminal_reader import detect_attention_type
 
@@ -55,6 +55,10 @@ class WindowManager:
                         return True
 
                 class_name = win32gui.GetClassName(hwnd)
+
+                # Skip browsers and other excluded window classes
+                if class_name in CLASS_EXCLUDE:
+                    return True
 
                 # Match by class name or title keywords
                 matched = class_name in WINDOW_CLASSES
