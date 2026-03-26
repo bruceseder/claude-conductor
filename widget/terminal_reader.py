@@ -157,5 +157,5 @@ def detect_attention_type(hwnd):
             if s == '>' or s == '> ':
                 return 'idle'
 
-    # No clear idle signal — likely a TUI prompt we can't read
-    return 'choice'
+    # No clear signal — don't assume attention needed
+    return None

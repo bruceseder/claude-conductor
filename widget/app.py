@@ -55,6 +55,7 @@ class App:
                 self._monitor_mgr.refresh()
                 self._widget.update_monitors(self._monitor_mgr.monitors)
 
+            self._window_mgr.set_nicknamed_hwnds(self._widget.get_nicknamed_hwnds())
             windows = self._window_mgr.enumerate_windows()
             self._widget.update_window_list(windows)
         except Exception:

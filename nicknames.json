@@ -2,5 +2,11 @@
   "kalshi-prediction-market-integration": "ATLAS",
   "Add naming feature for terminal windows": "Conductor",
   "Fix batch creation payload size limit": "Data-Pulse",
-  "Fix email verification crash with caching": "Logistics"
+  "Fix email verification crash with caching": "Logistics",
+  "Review project readiness to start server": "HARNESS",
+  "Claude Code": "WestGroup",
+  "Check job run status": "Widget",
+  "claude": "HARNESS",
+  "Enhance window border glow visibility": "WIDGET",
+  "Improve code quality and performance": "Logistics"
 }

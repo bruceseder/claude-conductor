@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 
 from . import config as cfg
-from .utils import lerp_color, set_window_border_color, reset_window_border_color
+from .utils import lerp_color, set_window_border_color, reset_window_border_color, set_window_title, fetch_claude_status
 
 _NICKNAMES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'nicknames.json')
 
@@ -323,6 +323,21 @@ class PowerWidget(tk.Toplevel):
         grip.bind('<Button-1>', self._start_resize)
         grip.bind('<B1-Motion>', self._on_resize)
 
+        # Claude network status indicator (right-aligned, before grip)
+        self._net_status_label = tk.Label(self._status_frame, text="?",
+                                          font=self._font_small, bg=cfg.BG_SECONDARY,
+                                          fg=cfg.FG_DIM, anchor='e')
+        self._net_status_label.pack(side='right', padx=(0, 2), fill='y')
+
+        self._net_status_dot = tk.Canvas(self._status_frame, width=8, height=8,
+                                          bg=cfg.BG_SECONDARY, highlightthickness=0)
+        self._net_status_dot.pack(side='right', padx=(4, 0), pady=0)
+        self._net_dot_oval = self._net_status_dot.create_oval(1, 1, 7, 7,
+                                                               fill=cfg.FG_DIM, outline='')
+
+        # Start polling
+        self._poll_claude_status()
+
     def _start_resize(self, event):
         self._resize_y = event.y_root
         self._resize_h = self.winfo_height()
@@ -331,6 +346,27 @@ class PowerWidget(tk.Toplevel):
         dy = event.y_root - self._resize_y
         new_h = max(cfg.WIDGET_MIN_HEIGHT, min(cfg.WIDGET_MAX_HEIGHT, self._resize_h + dy))
         self.geometry(f'{cfg.WIDGET_WIDTH}x{new_h}')
+
+    def _poll_claude_status(self):
+        """Fetch Claude network status in background, update UI on completion."""
+        def _on_result(indicator, label):
+            # Schedule UI update on main thread
+            try:
+                self.after(0, lambda: self._update_net_status(indicator, label))
+            except Exception:
+                pass
+
+        fetch_claude_status(_on_result)
+        self.after(cfg.STATUS_POLL_INTERVAL_MS, self._poll_claude_status)
+
+    def _update_net_status(self, indicator, label):
+        """Update the network status dot and label."""
+        color = cfg.STATUS_COLORS.get(indicator, cfg.FG_DIM)
+        try:
+            self._net_status_dot.itemconfigure(self._net_dot_oval, fill=color)
+            self._net_status_label.configure(text=label, fg=color)
+        except tk.TclError:
+            pass
 
     # --- Public API ---
     def update_window_list(self, windows):
@@ -464,6 +500,7 @@ class PowerWidget(tk.Toplevel):
         if abs(desired_h - current_h) > 20:
             self.geometry(f'{cfg.WIDGET_WIDTH}x{desired_h}')
 
+
     def _animate_pulse(self):
         """Smooth pulsating glow for attention rows AND actual window borders."""
         if not self._pulse_running or not self._pulse_rows:
@@ -496,7 +533,8 @@ class PowerWidget(tk.Toplevel):
             bg = lerp_color(cfg.BG_COLOR, color_dim, t)
             dot_c = lerp_color(color_main, color_bright, t)
             fg = lerp_color(color_main, color_bright, t)
-            border_color = lerp_color(color_dim, color_main, t)
+            border_color = lerp_color(color_main, color_bright, t)
+            caption_color = lerp_color(color_dim, color_main, t)
 
             try:
                 row.configure(bg=bg)
@@ -509,12 +547,13 @@ class PowerWidget(tk.Toplevel):
             except tk.TclError:
                 pass
 
-            # Pulse the actual window border via DWM (throttled)
+            # Pulse the actual window border + title bar via DWM (throttled)
             if update_borders:
+                cache_key = (border_color, caption_color)
                 last = self._last_border_color.get(hwnd)
-                if last != border_color:
-                    set_window_border_color(hwnd, border_color)
-                    self._last_border_color[hwnd] = border_color
+                if last != cache_key:
+                    set_window_border_color(hwnd, border_color, caption_color)
+                    self._last_border_color[hwnd] = cache_key
                 self._border_pulsing.add(hwnd)
 
         self.after(cfg.PULSE_INTERVAL_MS, self._animate_pulse)
@@ -523,6 +562,10 @@ class PowerWidget(tk.Toplevel):
         """Update the monitor selector options."""
         self._monitors = monitors
         self._rebuild_monitor_menu()
+
+    def get_nicknamed_hwnds(self):
+        """Return set of hwnds that have user-assigned nicknames."""
+        return set(self._nicknames.keys())
 
     def get_hwnd(self):
         """Get the widget's own window handle."""
@@ -566,10 +609,17 @@ class PowerWidget(tk.Toplevel):
         if hwnd in self._nicknames:
             return self._nicknames[hwnd]
         if display_title in self._title_nicknames:
-            # Restore from persisted map
+            # Restore from persisted map (original title -> nickname)
             nick = self._title_nicknames[display_title]
             self._nicknames[hwnd] = nick
             return nick
+        # Check if the window title IS a nickname (console was renamed)
+        # Case-insensitive: SetConsoleTitleW may change casing
+        display_lower = display_title.lower()
+        for val in self._title_nicknames.values():
+            if val.lower() == display_lower:
+                self._nicknames[hwnd] = val
+                return val
         return None
 
     def _start_rename(self, hwnd, display_title, row, lbl):
@@ -601,6 +651,7 @@ class PowerWidget(tk.Toplevel):
                 self._save_nicknames()
                 nick_display = new_name if len(new_name) <= 38 else new_name[:36] + "\u2026"
                 lbl.configure(text=nick_display)
+                set_window_title(hwnd, new_name)
             elif not new_name or new_name == display_title:
                 # Clear nickname
                 self._nicknames.pop(hwnd, None)

@@ -1,8 +1,14 @@
 import ctypes
 import ctypes.wintypes
+import json
+import threading
+import urllib.request
+import urllib.error
 import win32gui
 import win32con
 import pywintypes
+
+from . import config as cfg
 
 
 def setup_dpi_awareness():
@@ -116,6 +122,7 @@ def lerp_color(hex1, hex2, t):
 
 # --- DWM Window Border Color (Windows 11) ---
 DWMWA_BORDER_COLOR = 34
+DWMWA_CAPTION_COLOR = 35
 DWMWA_COLOR_DEFAULT = 0xFFFFFFFF
 
 
@@ -125,25 +132,136 @@ def _hex_to_colorref(hex_color):
     return (b << 16) | (g << 8) | r
 
 
-def set_window_border_color(hwnd, hex_color):
-    """Set the DWM border color of a window. Windows 11 only."""
+def set_window_border_color(hwnd, hex_color, caption_color=None):
+    """Set the DWM border and optionally title bar color. Windows 11 only."""
     try:
         colorref = ctypes.c_int(_hex_to_colorref(hex_color))
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
             hwnd, DWMWA_BORDER_COLOR,
             ctypes.byref(colorref), ctypes.sizeof(colorref)
         )
+        if caption_color:
+            cap_ref = ctypes.c_int(_hex_to_colorref(caption_color))
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, DWMWA_CAPTION_COLOR,
+                ctypes.byref(cap_ref), ctypes.sizeof(cap_ref)
+            )
+    except Exception:
+        pass
+
+
+# --- Console Title (Windows Terminal) ---
+
+TH32CS_SNAPPROCESS = 0x00000002
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.wintypes.DWORD),
+        ("cntUsage", ctypes.wintypes.DWORD),
+        ("th32ProcessID", ctypes.wintypes.DWORD),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", ctypes.wintypes.DWORD),
+        ("cntThreads", ctypes.wintypes.DWORD),
+        ("th32ParentProcessID", ctypes.wintypes.DWORD),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", ctypes.wintypes.DWORD),
+        ("szExeFile", ctypes.c_wchar * 260),
+    ]
+
+
+def _get_descendant_pids(parent_pid):
+    """Get all descendant process PIDs using a single snapshot."""
+    snapshot = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if snapshot == -1:
+        return []
+    try:
+        children_map = {}
+        entry = _PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
+        if ctypes.windll.kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+            while True:
+                ppid = entry.th32ParentProcessID
+                children_map.setdefault(ppid, []).append(entry.th32ProcessID)
+                if not ctypes.windll.kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                    break
+    finally:
+        ctypes.windll.kernel32.CloseHandle(snapshot)
+
+    # BFS to collect all descendants
+    result = []
+    queue = list(children_map.get(parent_pid, []))
+    visited = {parent_pid}
+    while queue:
+        pid = queue.pop(0)
+        if pid in visited:
+            continue
+        visited.add(pid)
+        result.append(pid)
+        queue.extend(children_map.get(pid, []))
+    return result
+
+
+def set_window_title(hwnd, title):
+    """Set the console title for a terminal window via AttachConsole + SetConsoleTitleW."""
+    try:
+        pid = ctypes.wintypes.DWORD()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        target_pid = pid.value
+        if not target_pid:
+            return
+
+        # Try the window's own PID first, then all descendant processes
+        pids_to_try = [target_pid] + _get_descendant_pids(target_pid)
+
+        ctypes.windll.kernel32.FreeConsole()
+        for p in pids_to_try:
+            if ctypes.windll.kernel32.AttachConsole(p):
+                ctypes.windll.kernel32.SetConsoleTitleW(title)
+                ctypes.windll.kernel32.FreeConsole()
+                return
     except Exception:
         pass
 
 
 def reset_window_border_color(hwnd):
-    """Reset window border to system default."""
+    """Reset window border and title bar to system default."""
     try:
         default = ctypes.c_int(DWMWA_COLOR_DEFAULT)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
             hwnd, DWMWA_BORDER_COLOR,
             ctypes.byref(default), ctypes.sizeof(default)
         )
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, DWMWA_CAPTION_COLOR,
+            ctypes.byref(default), ctypes.sizeof(default)
+        )
     except Exception:
         pass
+
+
+# --- Claude Network Status ---
+
+_STATUS_LABELS = {
+    "none": "OK",
+    "minor": "Degraded",
+    "major": "Major Outage",
+    "critical": "Down",
+    "unknown": "?",
+}
+
+
+def fetch_claude_status(callback):
+    """Fetch Claude status in a background thread. Calls callback(indicator, description)."""
+    def _fetch():
+        try:
+            req = urllib.request.Request(cfg.STATUS_URL, headers={"User-Agent": "PowerWidget/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                indicator = data.get("status", {}).get("indicator", "unknown")
+                callback(indicator, _STATUS_LABELS.get(indicator, "?"))
+        except Exception:
+            callback("unknown", "?")
+
+    t = threading.Thread(target=_fetch, daemon=True)
+    t.start()

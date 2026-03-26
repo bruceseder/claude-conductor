@@ -18,13 +18,13 @@ BUTTON_HOVER = "#585b70"
 BORDER_COLOR = "#585b70"
 # Choice/decision pulse (orange) - Claude asking yes/no, 1/2/3
 ATTENTION_COLOR = "#ff7b00"
-ATTENTION_COLOR_BRIGHT = "#ffaa44"
-ATTENTION_COLOR_DIM = "#3d1e00"
+ATTENTION_COLOR_BRIGHT = "#ffcc55"
+ATTENTION_COLOR_DIM = "#5a2e00"
 
 # Idle/done pulse (teal-green) - Claude finished, waiting for next instruction
 IDLE_COLOR = "#00cc88"
-IDLE_COLOR_BRIGHT = "#44ffbb"
-IDLE_COLOR_DIM = "#002a1a"
+IDLE_COLOR_BRIGHT = "#66ffcc"
+IDLE_COLOR_DIM = "#004d33"
 
 FONT_FAMILY = "Cascadia Code"
 FONT_FALLBACK = "Consolas"
@@ -38,6 +38,17 @@ ROW_HEIGHT = 32
 
 # Refresh interval (ms)
 REFRESH_INTERVAL_MS = 2000
+
+# Claude network status
+STATUS_POLL_INTERVAL_MS = 60000  # 60 seconds
+STATUS_URL = "https://status.claude.com/api/v2/status.json"
+STATUS_COLORS = {
+    "none": "#a6e3a1",       # green - operational
+    "minor": "#f9e2af",      # yellow - degraded
+    "major": "#fab387",      # peach/orange - major outage
+    "critical": "#f38ba8",   # red - critical
+    "unknown": "#6c7086",    # dim - can't reach
+}
 
 # Tiling
 TILE_GAP = 6

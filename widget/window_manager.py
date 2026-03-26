@@ -28,9 +28,14 @@ class WindowManager:
         self._windows = []
         # hwnd -> 'choice' or 'idle'; presence means needs attention
         self._attention_state = {}
+        self._nicknamed_hwnds = set()  # hwnds with user-assigned nicknames
+        self._known_claude_hwnds = set()  # hwnds ever identified as Claude (persists until closed)
 
     def add_exclude(self, hwnd):
         self._exclude_hwnds.add(hwnd)
+
+    def set_nicknamed_hwnds(self, hwnds):
+        self._nicknamed_hwnds = set(hwnds)
 
     def enumerate_windows(self):
         """Find all terminal/Claude windows."""
@@ -70,7 +75,9 @@ class WindowManager:
 
                 _, pid = win32process.GetWindowThreadProcessId(hwnd)
                 is_minimized = bool(win32gui.IsIconic(hwnd))
-                is_claude = is_claude_window(title)
+                is_claude = is_claude_window(title) or hwnd in self._nicknamed_hwnds or hwnd in self._known_claude_hwnds
+                if is_claude:
+                    self._known_claude_hwnds.add(hwnd)
                 currently_spinning = has_spinner(title)
 
                 # A Claude window with no spinner = waiting for input
@@ -78,8 +85,9 @@ class WindowManager:
                 if is_claude:
                     if currently_spinning:
                         self._attention_state.pop(hwnd, None)
-                    elif hwnd not in self._attention_state or True:
-                        # Re-detect attention type each cycle
+                    else:
+                        # Re-detect attention type each cycle so state
+                        # transitions (idle → choice) are caught
                         if class_name == 'CASCADIA_HOSTING_WINDOW_CLASS':
                             atype = detect_attention_type(hwnd) or 'idle'
                         else:
@@ -99,7 +107,7 @@ class WindowManager:
                     needs_attention=in_attention,
                     attention_type=self._attention_state.get(hwnd, ''),
                 ))
-            except pywintypes.error:
+            except Exception:
                 pass
             return True
 
@@ -108,6 +116,7 @@ class WindowManager:
         # Clean up stale hwnds
         live_hwnds = {w.hwnd for w in results}
         self._attention_state = {h: v for h, v in self._attention_state.items() if h in live_hwnds}
+        self._known_claude_hwnds &= live_hwnds
 
         # Sort: attention first, then Claude, then alphabetically
         results.sort(key=lambda w: (not w.needs_attention, not w.is_claude, w.display_title.lower()))
