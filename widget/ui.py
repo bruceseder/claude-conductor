@@ -79,10 +79,10 @@ class PowerWidget(tk.Toplevel):
         self._build_tile_buttons()
         # Separator
         tk.Frame(self, bg=cfg.BORDER_COLOR, height=1).pack(fill='x', padx=8)
-        # Window list
-        self._build_window_list()
-        # Status bar
+        # Status bar (pack before window list so it always has space)
         self._build_status_bar()
+        # Window list (expands to fill remaining space)
+        self._build_window_list()
 
     # --- Title Bar ---
     def _build_title_bar(self):
@@ -324,16 +324,10 @@ class PowerWidget(tk.Toplevel):
         grip.bind('<B1-Motion>', self._on_resize)
 
         # Claude network status indicator (right-aligned, before grip)
-        self._net_status_label = tk.Label(self._status_frame, text="?",
+        self._net_status_label = tk.Label(self._status_frame, text="\u25CF API: ?",
                                           font=self._font_small, bg=cfg.BG_SECONDARY,
                                           fg=cfg.FG_DIM, anchor='e')
-        self._net_status_label.pack(side='right', padx=(0, 2), fill='y')
-
-        self._net_status_dot = tk.Canvas(self._status_frame, width=8, height=8,
-                                          bg=cfg.BG_SECONDARY, highlightthickness=0)
-        self._net_status_dot.pack(side='right', padx=(4, 0), pady=0)
-        self._net_dot_oval = self._net_status_dot.create_oval(1, 1, 7, 7,
-                                                               fill=cfg.FG_DIM, outline='')
+        self._net_status_label.pack(side='right', padx=(0, 4), fill='y')
 
         # Start polling
         self._poll_claude_status()
@@ -360,11 +354,10 @@ class PowerWidget(tk.Toplevel):
         self.after(cfg.STATUS_POLL_INTERVAL_MS, self._poll_claude_status)
 
     def _update_net_status(self, indicator, label):
-        """Update the network status dot and label."""
+        """Update the network status label."""
         color = cfg.STATUS_COLORS.get(indicator, cfg.FG_DIM)
         try:
-            self._net_status_dot.itemconfigure(self._net_dot_oval, fill=color)
-            self._net_status_label.configure(text=label, fg=color)
+            self._net_status_label.configure(text=f"\u25CF API: {label}", fg=color)
         except tk.TclError:
             pass
 
