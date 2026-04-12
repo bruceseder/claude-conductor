@@ -6,6 +6,15 @@ from . import config as cfg
 from .utils import lerp_color, set_window_border_color, reset_window_border_color, fetch_claude_status
 
 
+def _fmt_time(seconds):
+    """Format seconds as compact time string."""
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h > 0:
+        return f"{h}h{m:02d}m"
+    return f"{m}m"
+
+
 class PowerWidget(tk.Toplevel):
     def __init__(self, master, monitors, on_focus, on_tile, on_minimize_all,
                  on_restore_all, on_refresh, on_monitor_change):
@@ -356,7 +365,7 @@ class PowerWidget(tk.Toplevel):
             pass
 
     # --- Public API ---
-    def update_window_list(self, windows):
+    def update_window_list(self, windows, time_tracker=None):
         """Rebuild the window list with current windows."""
         # Don't rebuild while user is renaming a window
         if self._editing_hwnd is not None:
@@ -425,6 +434,14 @@ class PowerWidget(tk.Toplevel):
                 min_lbl = tk.Label(row, text="\u2500", font=self._font_small,
                                    bg=cfg.BG_COLOR, fg=cfg.FG_DIM)
                 min_lbl.pack(side='right', padx=4)
+
+            # Time tracking label
+            if time_tracker:
+                secs = time_tracker.get_today_seconds(win.hwnd)
+                if secs > 0:
+                    time_lbl = tk.Label(row, text=_fmt_time(secs), font=self._font_small,
+                                        bg=cfg.BG_COLOR, fg=cfg.FG_DIM)
+                    time_lbl.pack(side='right', padx=(0, 4))
 
             # Number shortcut label
             if i < 9:

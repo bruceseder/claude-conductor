@@ -13,11 +13,12 @@ When you run multiple Claude Code CLI sessions simultaneously, it's hard to know
 
 Claude Conductor is a compact, always-on-top floating widget that:
 
-- **Lists all your Claude windows** in one place
+- **Lists all your Claude windows** in one place (non-Claude terminals are filtered out)
 - **Pulses orange** when Claude needs a decision from you (yes/no, 1/2/3 choices, tool approvals)
 - **Pulses teal-green** when Claude is done and waiting for your next instruction
 - **Pulses the actual window border** so you can spot which window needs you even without the widget
 - **Tiles and arranges** windows across multiple monitors with one click
+- **Tracks time per project** so you know how much Claude is working on each codebase
 
 ## Features
 
@@ -61,6 +62,17 @@ Arrange all detected windows with one click:
 - **Specific monitor**: Tile on a single selected monitor
 - **Distribute**: Spread windows evenly across monitors (round-robin assignment, then tile each group)
 
+### Time Tracking
+
+Claude Conductor tracks how much time Claude spends working on each project. Projects are identified by their **working directory** (resolved via the process tree using `psutil`), so renaming windows doesn't split accumulated time.
+
+Time is accumulated from three sources:
+- **Thinking time** (purple/spinning): real seconds while Claude is actively processing
+- **Idle transition** (green): +5 minutes each time Claude finishes, accounting for your time reading output and typing the next prompt
+- **Choice transition** (orange): +1 minute each time Claude asks a question, accounting for decision time
+
+Time is displayed per-row in the widget and persisted to `claude_time.json`, keyed by `project_directory|date`. Multiple windows in the same project directory accumulate into the same bucket.
+
 ### Widget UI
 
 - Dark theme matching terminal aesthetics (Catppuccin Mocha inspired)
@@ -86,15 +98,14 @@ Arrange all detected windows with one click:
 - **Python 3.12+**
 - **pywin32** (`pip install pywin32`)
 - **comtypes** (`pip install comtypes`) — for UI Automation terminal text reading
-
-psutil is listed in requirements.txt but not currently used.
+- **psutil** (`pip install psutil`) — for resolving project working directories from process trees
 
 ## Installation
 
 ```bash
 git clone https://github.com/bruceseder/claude-conductor.git
 cd claude-conductor
-pip install pywin32 comtypes
+pip install pywin32 comtypes psutil
 ```
 
 ## Usage
@@ -109,7 +120,7 @@ The widget appears in the bottom-right corner of your primary monitor. Open some
 
 ### Window Detection
 
-Finds windows by Win32 class name (`CASCADIA_HOSTING_WINDOW_CLASS` for Windows Terminal, `ConsoleWindowClass` for legacy console) and by title keywords (`claude`, `powershell`, `pwsh`, `bash`, `cmd`). Also detects the Claude desktop app (`Chrome_WidgetWin_1`).
+Finds windows by Win32 class name (`CASCADIA_HOSTING_WINDOW_CLASS` for Windows Terminal, `ConsoleWindowClass` for legacy console) and by title keywords. Only Claude Code sessions are shown — plain terminal windows, File Explorer, and browsers are filtered out. Windows are identified by their HWND (window handle), not by title, so renaming via Claude's `/rename` command is immediately reflected without breaking the connection.
 
 ### Terminal Text Reading
 
@@ -130,6 +141,7 @@ claude-conductor/
 │   ├── window_manager.py    # Win32 window enumeration and manipulation
 │   ├── monitor_manager.py   # Multi-monitor detection and work areas
 │   ├── terminal_reader.py   # UI Automation terminal text reading
+│   ├── time_tracker.py      # Per-project time tracking (by working directory)
 │   ├── tiling.py            # Layout algorithms (grid, h-split, v-split, cascade)
 │   ├── config.py            # Constants, colors, detection patterns
 │   └── utils.py             # Win32 helpers, DPI, color lerp, DWM border API

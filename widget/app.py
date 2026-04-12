@@ -4,6 +4,7 @@ from . import config as cfg
 from .window_manager import WindowManager
 from .monitor_manager import MonitorManager
 from .tiling import calculate_layout, distribute_across_monitors
+from .time_tracker import TimeTracker
 from .ui import PowerWidget
 
 
@@ -14,6 +15,7 @@ class App:
 
         self._monitor_mgr = MonitorManager()
         self._window_mgr = WindowManager()
+        self._time_tracker = TimeTracker()
         self._selected_monitor = "All"
         self._monitor_refresh_counter = 0
 
@@ -57,7 +59,8 @@ class App:
 
             self._window_mgr.set_nicknamed_hwnds(self._widget.get_nicknamed_hwnds())
             windows = self._window_mgr.enumerate_windows()
-            self._widget.update_window_list(windows)
+            self._time_tracker.update(windows, refresh_secs=cfg.REFRESH_INTERVAL_MS // 1000)
+            self._widget.update_window_list(windows, self._time_tracker)
         except Exception:
             pass
         self._root.after(cfg.REFRESH_INTERVAL_MS, self._refresh)
