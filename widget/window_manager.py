@@ -76,23 +76,22 @@ class WindowManager:
                 _, pid = win32process.GetWindowThreadProcessId(hwnd)
                 is_minimized = bool(win32gui.IsIconic(hwnd))
                 is_claude = is_claude_window(title) or hwnd in self._nicknamed_hwnds or hwnd in self._known_claude_hwnds
-                if is_claude:
-                    self._known_claude_hwnds.add(hwnd)
+                if not is_claude:
+                    return True  # Skip non-Claude windows
+
+                self._known_claude_hwnds.add(hwnd)
                 currently_spinning = has_spinner(title)
 
-                # A Claude window with no spinner = waiting for input
-                # A Claude window with spinner = actively working
-                if is_claude:
-                    if currently_spinning:
-                        self._attention_state.pop(hwnd, None)
+                if currently_spinning:
+                    self._attention_state.pop(hwnd, None)
+                else:
+                    # Re-detect attention type each cycle so state
+                    # transitions (idle → choice) are caught
+                    if class_name == 'CASCADIA_HOSTING_WINDOW_CLASS':
+                        atype = detect_attention_type(hwnd) or 'idle'
                     else:
-                        # Re-detect attention type each cycle so state
-                        # transitions (idle → choice) are caught
-                        if class_name == 'CASCADIA_HOSTING_WINDOW_CLASS':
-                            atype = detect_attention_type(hwnd) or 'idle'
-                        else:
-                            atype = 'idle'
-                        self._attention_state[hwnd] = atype
+                        atype = 'idle'
+                    self._attention_state[hwnd] = atype
 
                 in_attention = hwnd in self._attention_state
 
@@ -100,7 +99,7 @@ class WindowManager:
                     hwnd=hwnd,
                     title=title,
                     display_title=clean_title(title),
-                    is_claude=is_claude,
+                    is_claude=True,
                     class_name=class_name,
                     pid=pid,
                     is_minimized=is_minimized,
@@ -118,8 +117,8 @@ class WindowManager:
         self._attention_state = {h: v for h, v in self._attention_state.items() if h in live_hwnds}
         self._known_claude_hwnds &= live_hwnds
 
-        # Sort: attention first, then Claude, then alphabetically
-        results.sort(key=lambda w: (not w.needs_attention, not w.is_claude, w.display_title.lower()))
+        # Sort: attention first, then alphabetically
+        results.sort(key=lambda w: (not w.needs_attention, w.display_title.lower()))
         self._windows = results
         return results
 

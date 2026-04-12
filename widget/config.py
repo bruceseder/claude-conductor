@@ -3,7 +3,7 @@ WINDOW_CLASSES = ["CASCADIA_HOSTING_WINDOW_CLASS", "ConsoleWindowClass"]
 TITLE_KEYWORDS = ["claude", "powershell", "pwsh", "bash", "cmd"]
 TITLE_EXCLUDE = ["power-widget", "Power Widget", "Claude Conductor"]
 # Browser window classes to ignore (Edge, Chrome, Firefox, etc.)
-CLASS_EXCLUDE = ["Chrome_WidgetWin_1", "MozillaWindowClass", "ApplicationFrameWindow"]
+CLASS_EXCLUDE = ["Chrome_WidgetWin_1", "MozillaWindowClass", "ApplicationFrameWindow", "CabinetWClass"]
 
 # UI Theme (dark, terminal aesthetic)
 BG_COLOR = "#1e1e2e"
