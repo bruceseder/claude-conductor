@@ -1,13 +1,9 @@
-import json
 import math
-import os
 import tkinter as tk
 from tkinter import font as tkfont
 
 from . import config as cfg
-from .utils import lerp_color, set_window_border_color, reset_window_border_color, set_window_title, fetch_claude_status
-
-_NICKNAMES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'nicknames.json')
+from .utils import lerp_color, set_window_border_color, reset_window_border_color, fetch_claude_status
 
 
 class PowerWidget(tk.Toplevel):
@@ -36,10 +32,8 @@ class PowerWidget(tk.Toplevel):
         self._last_border_color = {}  # hwnd -> last hex color sent to DWM
         self._border_frame_count = 0
 
-        self._nicknames = {}       # hwnd -> custom name (session)
-        self._title_nicknames = {}  # display_title -> custom name (persisted)
+        self._nicknames = {}       # hwnd -> (nickname, title_at_assignment)
         self._editing_hwnd = None   # hwnd currently being renamed
-        self._load_nicknames()
 
         self._setup_window()
         self._setup_fonts()
@@ -557,7 +551,7 @@ class PowerWidget(tk.Toplevel):
         self._rebuild_monitor_menu()
 
     def get_nicknamed_hwnds(self):
-        """Return set of hwnds that have user-assigned nicknames."""
+        """Return set of hwnds that have active user-assigned nicknames."""
         return set(self._nicknames.keys())
 
     def get_hwnd(self):
@@ -583,36 +577,14 @@ class PowerWidget(tk.Toplevel):
             self._on_focus(windows[index].hwnd)
 
     # --- Nickname Management ---
-    def _load_nicknames(self):
-        try:
-            with open(_NICKNAMES_FILE, 'r') as f:
-                self._title_nicknames = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self._title_nicknames = {}
-
-    def _save_nicknames(self):
-        try:
-            with open(_NICKNAMES_FILE, 'w') as f:
-                json.dump(self._title_nicknames, f, indent=2)
-        except OSError:
-            pass
-
     def _get_nickname(self, hwnd, display_title):
-        """Return nickname for a window, checking hwnd first then persisted title map."""
+        """Return nickname if set and the underlying title hasn't changed."""
         if hwnd in self._nicknames:
-            return self._nicknames[hwnd]
-        if display_title in self._title_nicknames:
-            # Restore from persisted map (original title -> nickname)
-            nick = self._title_nicknames[display_title]
-            self._nicknames[hwnd] = nick
-            return nick
-        # Check if the window title IS a nickname (console was renamed)
-        # Case-insensitive: SetConsoleTitleW may change casing
-        display_lower = display_title.lower()
-        for val in self._title_nicknames.values():
-            if val.lower() == display_lower:
-                self._nicknames[hwnd] = val
-                return val
+            nickname, title_at_assignment = self._nicknames[hwnd]
+            if display_title == title_at_assignment:
+                return nickname
+            # Title changed externally (e.g. Claude /rename) — clear the override
+            del self._nicknames[hwnd]
         return None
 
     def _start_rename(self, hwnd, display_title, row, lbl):
@@ -639,17 +611,12 @@ class PowerWidget(tk.Toplevel):
             self._editing_hwnd = None
 
             if new_name and new_name != display_title:
-                self._nicknames[hwnd] = new_name
-                self._title_nicknames[display_title] = new_name
-                self._save_nicknames()
+                self._nicknames[hwnd] = (new_name, display_title)
                 nick_display = new_name if len(new_name) <= 38 else new_name[:36] + "\u2026"
                 lbl.configure(text=nick_display)
-                set_window_title(hwnd, new_name)
             elif not new_name or new_name == display_title:
                 # Clear nickname
                 self._nicknames.pop(hwnd, None)
-                self._title_nicknames.pop(display_title, None)
-                self._save_nicknames()
                 title_display = display_title if len(display_title) <= 38 else display_title[:36] + "\u2026"
                 lbl.configure(text=title_display)
 
