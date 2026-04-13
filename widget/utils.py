@@ -243,25 +243,33 @@ def reset_window_border_color(hwnd):
 # --- Claude Network Status ---
 
 _STATUS_LABELS = {
-    "none": "OK",
-    "minor": "Degraded",
-    "major": "Major Outage",
-    "critical": "Down",
+    "operational": "OK",
+    "degraded_performance": "Deg",
+    "partial_outage": "Part",
+    "major_outage": "Out",
     "unknown": "?",
 }
 
 
 def fetch_claude_status(callback):
-    """Fetch Claude status in a background thread. Calls callback(indicator, description)."""
+    """Fetch Claude component statuses in a background thread.
+
+    Calls callback(results) where results is a list of (short_name, status, label)
+    tuples ordered by STATUS_COMPONENTS (Code, API, Web).
+    """
     def _fetch():
         try:
             req = urllib.request.Request(cfg.STATUS_URL, headers={"User-Agent": "PowerWidget/1.0"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
-                indicator = data.get("status", {}).get("indicator", "unknown")
-                callback(indicator, _STATUS_LABELS.get(indicator, "?"))
+                by_id = {c["id"]: c.get("status", "unknown") for c in data.get("components", [])}
+                results = []
+                for comp_id, short_name in cfg.STATUS_COMPONENTS.items():
+                    status = by_id.get(comp_id, "unknown")
+                    results.append((short_name, status, _STATUS_LABELS.get(status, "?")))
+                callback(results)
         except Exception:
-            callback("unknown", "?")
+            callback([(name, "unknown", "?") for name in cfg.STATUS_COMPONENTS.values()])
 
     t = threading.Thread(target=_fetch, daemon=True)
     t.start()

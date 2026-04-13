@@ -41,13 +41,18 @@ REFRESH_INTERVAL_MS = 2000
 
 # Claude network status
 STATUS_POLL_INTERVAL_MS = 60000  # 60 seconds
-STATUS_URL = "https://status.claude.com/api/v2/status.json"
+STATUS_URL = "https://status.claude.com/api/v2/components.json"
+STATUS_COMPONENTS = {
+    "yyzkbfz2thpt": "Code",   # Claude Code
+    "k8w3r06qmzrp": "API",    # Claude API (api.anthropic.com)
+    "rwppv331jlwc":  "Web",   # claude.ai
+}
 STATUS_COLORS = {
-    "none": "#a6e3a1",       # green - operational
-    "minor": "#f9e2af",      # yellow - degraded
-    "major": "#fab387",      # peach/orange - major outage
-    "critical": "#f38ba8",   # red - critical
-    "unknown": "#6c7086",    # dim - can't reach
+    "operational": "#a6e3a1",           # green
+    "degraded_performance": "#f9e2af",  # yellow
+    "partial_outage": "#fab387",        # peach/orange
+    "major_outage": "#f38ba8",          # red
+    "unknown": "#6c7086",              # dim - can't reach
 }
 
 # Tiling

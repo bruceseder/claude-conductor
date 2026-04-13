@@ -326,11 +326,15 @@ class PowerWidget(tk.Toplevel):
         grip.bind('<Button-1>', self._start_resize)
         grip.bind('<B1-Motion>', self._on_resize)
 
-        # Claude network status indicator (right-aligned, before grip)
-        self._net_status_label = tk.Label(self._status_frame, text="\u25CF API: ?",
-                                          font=self._font_small, bg=cfg.BG_SECONDARY,
-                                          fg=cfg.FG_DIM, anchor='e')
-        self._net_status_label.pack(side='right', padx=(0, 4), fill='y')
+        # Claude network status indicators (right-aligned, before grip)
+        # Colored dot + name; dot color = status (green/yellow/orange/red)
+        self._net_status_labels = {}
+        for short_name in reversed(list(cfg.STATUS_COMPONENTS.values())):
+            lbl = tk.Label(self._status_frame, text=f"\u25CF{short_name}",
+                           font=self._font_small, bg=cfg.BG_SECONDARY,
+                           fg=cfg.FG_DIM, anchor='e')
+            lbl.pack(side='right', padx=(0, 4), fill='y')
+            self._net_status_labels[short_name] = lbl
 
         # Start polling
         self._poll_claude_status()
@@ -346,23 +350,25 @@ class PowerWidget(tk.Toplevel):
 
     def _poll_claude_status(self):
         """Fetch Claude network status in background, update UI on completion."""
-        def _on_result(indicator, label):
-            # Schedule UI update on main thread
+        def _on_result(results):
             try:
-                self.after(0, lambda: self._update_net_status(indicator, label))
+                self.after(0, lambda: self._update_net_status(results))
             except Exception:
                 pass
 
         fetch_claude_status(_on_result)
         self.after(cfg.STATUS_POLL_INTERVAL_MS, self._poll_claude_status)
 
-    def _update_net_status(self, indicator, label):
-        """Update the network status label."""
-        color = cfg.STATUS_COLORS.get(indicator, cfg.FG_DIM)
-        try:
-            self._net_status_label.configure(text=f"\u25CF API: {label}", fg=color)
-        except tk.TclError:
-            pass
+    def _update_net_status(self, results):
+        """Update the network status labels for each component."""
+        for short_name, status, _label in results:
+            color = cfg.STATUS_COLORS.get(status, cfg.FG_DIM)
+            lbl = self._net_status_labels.get(short_name)
+            if lbl:
+                try:
+                    lbl.configure(fg=color)
+                except tk.TclError:
+                    pass
 
     # --- Public API ---
     def update_window_list(self, windows, time_tracker=None):

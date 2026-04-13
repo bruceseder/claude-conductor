@@ -54,7 +54,7 @@ def get_terminal_lines(hwnd, last_n=15):
 
 
 def _find_term_control(walker, element, depth):
-    """Walk the UIA tree to find the TermControl element."""
+    """Walk the UIA tree to find the first TermControl element."""
     if depth > 6:
         return None
     child = walker.GetFirstChildElement(element)
@@ -88,23 +88,27 @@ CHOICE_PATTERNS = [
 
 
 def detect_attention_type(hwnd):
-    """Determine what kind of attention a terminal window needs.
+    """Determine what kind of attention a terminal window needs."""
+    lines = get_terminal_lines(hwnd, last_n=30)
+    if not lines:
+        return None
+    return _detect_attention_from_lines(lines)
+
+
+def _detect_attention_from_lines(lines):
+    """Shared attention detection logic for both single-window and per-pane reads.
 
     Strategy:
-    - Check last 8 lines for choice patterns (tight window, avoids stale matches)
-    - Check last 20 lines for idle indicators (wider window, ● and > may be
+    - Check last 10 lines for choice patterns (tight window, avoids stale matches)
+    - Check last 20 lines for idle indicators (wider window, bullet and > may be
       above recent output like diffs or tables)
-    - If neither found → 'choice' (likely a TUI prompt we can't read)
+    - If neither found, no clear signal
 
     Returns:
         'choice'  - Claude is asking a question or needs approval
         'idle'    - Claude is done, waiting for next instruction
         None      - Could not determine
     """
-    lines = get_terminal_lines(hwnd, last_n=30)
-    if not lines:
-        return None
-
     # Check last 10 lines for choice patterns
     choice_lines = [line.strip().lower() for line in lines[-10:] if line.strip()]
     choice_text = '\n'.join(choice_lines)
@@ -114,9 +118,6 @@ def detect_attention_type(hwnd):
             return 'choice'
 
     # Check the LAST non-empty line specifically.
-    # A bare "●" or bare ">" = definitely idle (Claude's prompt).
-    # A "● text..." = Claude was mid-output when a TUI overlay may have
-    # appeared — NOT a reliable idle signal, so skip it.
     last_nonempty = None
     for line in reversed(lines):
         s = line.strip()
@@ -125,13 +126,12 @@ def detect_attention_type(hwnd):
             break
 
     if last_nonempty:
-        # Bare ● or bare > = definitely idle
         if last_nonempty == '\u25cf' or last_nonempty == '●':
             return 'idle'
         if last_nonempty == '>' or last_nonempty == '> ':
             return 'idle'
 
-    # Wider window for idle — only bare ● or bare > count (not ● with text)
+    # Wider window for idle
     idle_lines = [line.strip() for line in lines[-20:] if line.strip()]
 
     for s in idle_lines:
@@ -140,9 +140,7 @@ def detect_attention_type(hwnd):
         if s == '>' or s == '> ':
             return 'idle'
 
-    # Check if a bare > prompt exists AFTER the last ● in the raw buffer.
-    # When Claude finishes, the sequence is: ● output... then bare > prompt.
-    # The > might be between empty lines in the raw buffer.
+    # Check if a bare > prompt exists AFTER the last bullet
     last_bullet_idx = -1
     for i in range(len(lines) - 1, -1, -1):
         s = lines[i].strip()
@@ -151,11 +149,9 @@ def detect_attention_type(hwnd):
             break
 
     if last_bullet_idx >= 0:
-        # Look for bare > prompt after the last ● line
         for i in range(last_bullet_idx + 1, len(lines)):
             s = lines[i].strip()
             if s == '>' or s == '> ':
                 return 'idle'
 
-    # No clear signal — don't assume attention needed
     return None
