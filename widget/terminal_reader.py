@@ -11,6 +11,11 @@ from comtypes.gen.UIAutomationClient import (
 )
 
 _uia = None
+# hwnd -> cached TermControl UIA element. Walking the UIA tree to (re)find the
+# TermControl is the bulk of a read's cross-process IPC, but the element is
+# stable for the life of the window, so we cache it and only re-walk when a
+# cached read throws (pane closed, window re-laid-out, etc.).
+_term_control_cache = {}
 
 
 def _get_uia():
@@ -32,6 +37,29 @@ def release_uia():
     """
     global _uia
     _uia = None
+    _term_control_cache.clear()
+
+
+def prune_term_control_cache(live_hwnds):
+    """Drop cached TermControl elements for windows no longer present, so the
+    cache doesn't accumulate dead COM proxies over a long session."""
+    for hwnd in list(_term_control_cache):
+        if hwnd not in live_hwnds:
+            del _term_control_cache[hwnd]
+
+
+def _read_lines_from_tc(tc, last_n):
+    """Read the last N lines of text from a TermControl element. Raises if the
+    element is stale (the caller treats that as a cache-miss signal)."""
+    tp = tc.GetCurrentPattern(UIA_TextPatternId)
+    if not tp:
+        return None
+    text_pattern = tp.QueryInterface(IUIAutomationTextPattern)
+    doc = text_pattern.DocumentRange
+    # Read the full buffer (-1 = unlimited, typically < 1MB, ~10ms)
+    text = doc.GetText(-1)
+    lines = text.strip().split('\n')
+    return lines[-last_n:]
 
 
 def get_terminal_lines(hwnd, last_n=15):
@@ -40,6 +68,15 @@ def get_terminal_lines(hwnd, last_n=15):
     Returns a list of strings, or None if text can't be read.
     """
     try:
+        # Fast path: reuse the cached TermControl element, skipping the tree walk.
+        tc = _term_control_cache.get(hwnd)
+        if tc is not None:
+            try:
+                return _read_lines_from_tc(tc, last_n)
+            except Exception:
+                # Cached element went stale — fall through and re-walk.
+                _term_control_cache.pop(hwnd, None)
+
         uia = _get_uia()
         el = uia.ElementFromHandle(hwnd)
         walker = uia.ControlViewWalker
@@ -48,17 +85,9 @@ def get_terminal_lines(hwnd, last_n=15):
         tc = _find_term_control(walker, el, depth=0)
         if not tc:
             return None
+        _term_control_cache[hwnd] = tc
 
-        tp = tc.GetCurrentPattern(UIA_TextPatternId)
-        if not tp:
-            return None
-
-        text_pattern = tp.QueryInterface(IUIAutomationTextPattern)
-        doc = text_pattern.DocumentRange
-        # Read the full buffer (-1 = unlimited, typically < 1MB, ~10ms)
-        text = doc.GetText(-1)
-        lines = text.strip().split('\n')
-        return lines[-last_n:]
+        return _read_lines_from_tc(tc, last_n)
     except Exception:
         return None
 

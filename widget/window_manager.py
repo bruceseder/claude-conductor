@@ -7,7 +7,7 @@ import pywintypes
 
 from .config import WINDOW_CLASSES, TITLE_KEYWORDS, TITLE_EXCLUDE, CLASS_EXCLUDE
 from .utils import clean_title, is_claude_window, has_spinner, force_set_foreground
-from .terminal_reader import detect_attention_type
+from .terminal_reader import detect_attention_type, prune_term_control_cache
 
 
 # Cache UIA detections for stable states. Idle/choice rarely flip without a
@@ -168,6 +168,7 @@ class WindowManager:
         self._attention_state = {h: v for h, v in self._attention_state.items() if h in live_hwnds}
         self._known_claude_hwnds &= live_hwnds
         self._atype_cache = {h: v for h, v in self._atype_cache.items() if h in live_hwnds}
+        prune_term_control_cache(live_hwnds)
 
         # Sort: attention first, then alphabetically
         results.sort(key=lambda w: (not w.needs_attention, w.display_title.lower()))

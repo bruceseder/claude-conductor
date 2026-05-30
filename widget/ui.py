@@ -625,24 +625,27 @@ class PowerWidget(tk.Toplevel):
                 color_bright = cfg.IDLE_COLOR_BRIGHT
                 color_dim = cfg.IDLE_COLOR_DIM
 
-            bg = lerp_color(cfg.BG_COLOR, color_dim, t)
-            dot_c = lerp_color(color_main, color_bright, t)
-            fg = lerp_color(color_main, color_bright, t)
-            border_color = lerp_color(color_main, color_bright, t)
-            caption_color = lerp_color(color_dim, color_main, t)
-
-            try:
-                row.configure(bg=bg)
-                lbl.configure(bg=bg, fg=fg)
-                dot_canvas.configure(bg=bg)
-                dot_canvas.itemconfigure(dot_oval, fill=dot_c)
-                for child in extras:
-                    child.configure(bg=bg)
-            except tk.TclError:
-                pass
+            # Skip the per-row Tk reconfigures while minimized — the rows are
+            # hidden behind the restore tab, so only the DWM borders (below)
+            # are actually visible. The bolt loop handles the restore tab itself.
+            if not self._minimized:
+                bg = lerp_color(cfg.BG_COLOR, color_dim, t)
+                dot_c = lerp_color(color_main, color_bright, t)
+                fg = lerp_color(color_main, color_bright, t)
+                try:
+                    row.configure(bg=bg)
+                    lbl.configure(bg=bg, fg=fg)
+                    dot_canvas.configure(bg=bg)
+                    dot_canvas.itemconfigure(dot_oval, fill=dot_c)
+                    for child in extras:
+                        child.configure(bg=bg)
+                except tk.TclError:
+                    pass
 
             # Pulse the actual window border + title bar via DWM (throttled)
             if update_borders:
+                border_color = lerp_color(color_main, color_bright, t)
+                caption_color = lerp_color(color_dim, color_main, t)
                 cache_key = (border_color, caption_color)
                 last = self._last_border_color.get(hwnd)
                 if last != cache_key:
