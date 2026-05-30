@@ -26,6 +26,10 @@ IDLE_COLOR = "#00cc88"
 IDLE_COLOR_BRIGHT = "#66ffcc"
 IDLE_COLOR_DIM = "#004d33"
 
+# Working/processing (purple) - Claude is actively running a task
+WORKING_COLOR = "#cba6f7"
+WORKING_COLOR_BRIGHT = "#e0c1ff"
+
 FONT_FAMILY = "Cascadia Code"
 FONT_FALLBACK = "Consolas"
 FONT_SIZE = 9
@@ -60,5 +64,5 @@ TILE_GAP = 6
 CASCADE_OFFSET = 32
 
 # Attention pulse animation
-PULSE_INTERVAL_MS = 50  # ~20fps widget row animation
-PULSE_SPEED = 0.045  # Radians per frame (full cycle ~3 seconds, gentler)
+PULSE_INTERVAL_MS = 80  # ~12fps widget row animation
+PULSE_SPEED = 0.072  # Radians per frame; scaled with PULSE_INTERVAL_MS to keep the same wall-clock cycle

@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 import win32gui
 import win32con
@@ -7,6 +8,19 @@ import pywintypes
 from .config import WINDOW_CLASSES, TITLE_KEYWORDS, TITLE_EXCLUDE, CLASS_EXCLUDE
 from .utils import clean_title, is_claude_window, has_spinner, force_set_foreground
 from .terminal_reader import detect_attention_type
+
+
+# Cache UIA detections for stable states. Idle/choice rarely flip without a
+# title change (the braille spinner cycles in the title during work, and that
+# flip already busts the cache). Working/None are NEVER cached, so the
+# spinnerless-tool-call -> idle transition is always picked up on the next tick.
+_UIA_CACHE_TTL_SECS = 4.0
+_UIA_CACHED_STATES = ('idle', 'choice')
+
+# Cap UIA reads per refresh tick so 4+ windows expiring on the same tick don't
+# all cross-process IPC at once. Excess windows reuse their stale cached value
+# for one extra tick (worst case ~2s of detection lag).
+_UIA_MAX_READS_PER_TICK = 2
 
 
 @dataclass
@@ -30,6 +44,7 @@ class WindowManager:
         self._attention_state = {}
         self._nicknamed_hwnds = set()  # hwnds with user-assigned nicknames
         self._known_claude_hwnds = set()  # hwnds ever identified as Claude (persists until closed)
+        self._atype_cache = {}  # hwnd -> (atype, title, monotonic_ts) for cached stable states
 
     def add_exclude(self, hwnd):
         self._exclude_hwnds.add(hwnd)
@@ -37,9 +52,40 @@ class WindowManager:
     def set_nicknamed_hwnds(self, hwnds):
         self._nicknamed_hwnds = set(hwnds)
 
+    def _detect_attention_cached(self, hwnd, title, now):
+        """Wrap detect_attention_type with a per-hwnd, title-keyed TTL cache.
+
+        Also enforces a per-tick UIA budget (_uia_reads_remaining is reset at
+        the top of enumerate_windows). When the budget is exhausted, fall back
+        to the stale cached value rather than doing another cross-process read.
+        """
+        cached = self._atype_cache.get(hwnd)
+        if cached is not None:
+            cached_atype, cached_title, cached_ts = cached
+            if cached_title == title and (now - cached_ts) < _UIA_CACHE_TTL_SECS:
+                return cached_atype
+
+        # Budget exhausted: defer this read by one tick. If we have any cached
+        # value (even stale or with old title), prefer it over None to avoid a
+        # one-tick attention flicker.
+        if self._uia_reads_remaining <= 0:
+            if cached is not None:
+                return cached[0]
+            return None
+
+        self._uia_reads_remaining -= 1
+        atype = detect_attention_type(hwnd)
+        if atype in _UIA_CACHED_STATES:
+            self._atype_cache[hwnd] = (atype, title, now)
+        else:
+            self._atype_cache.pop(hwnd, None)
+        return atype
+
     def enumerate_windows(self):
         """Find all terminal/Claude windows."""
         results = []
+        now = time.monotonic()
+        self._uia_reads_remaining = _UIA_MAX_READS_PER_TICK
 
         def callback(hwnd, _):
             try:
@@ -86,12 +132,17 @@ class WindowManager:
                     self._attention_state.pop(hwnd, None)
                 else:
                     # Re-detect attention type each cycle so state
-                    # transitions (idle → choice) are caught
+                    # transitions (idle → choice → working) are caught
                     if class_name == 'CASCADIA_HOSTING_WINDOW_CLASS':
-                        atype = detect_attention_type(hwnd) or 'idle'
+                        atype = self._detect_attention_cached(hwnd, title, now)
                     else:
-                        atype = 'idle'
-                    self._attention_state[hwnd] = atype
+                        atype = None
+                    if atype == 'working':
+                        # "esc to interrupt" footer detected — Claude is processing,
+                        # treat as spinner-positive even when title lacks braille.
+                        self._attention_state.pop(hwnd, None)
+                    else:
+                        self._attention_state[hwnd] = atype or 'idle'
 
                 in_attention = hwnd in self._attention_state
 
@@ -116,6 +167,7 @@ class WindowManager:
         live_hwnds = {w.hwnd for w in results}
         self._attention_state = {h: v for h, v in self._attention_state.items() if h in live_hwnds}
         self._known_claude_hwnds &= live_hwnds
+        self._atype_cache = {h: v for h, v in self._atype_cache.items() if h in live_hwnds}
 
         # Sort: attention first, then alphabetically
         results.sort(key=lambda w: (not w.needs_attention, w.display_title.lower()))

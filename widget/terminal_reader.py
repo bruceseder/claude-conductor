@@ -24,6 +24,16 @@ def _get_uia():
     return _uia
 
 
+def release_uia():
+    """Drop the cached IUIAutomation reference. Call before exiting so COM
+    proxies release while the Tk loop is still alive — otherwise CoUninitialize
+    at interpreter shutdown serializes Release() IPCs to Windows Terminal,
+    producing a multi-second freeze on close after long sessions.
+    """
+    global _uia
+    _uia = None
+
+
 def get_terminal_lines(hwnd, last_n=15):
     """Extract the last N lines of visible text from a Windows Terminal window.
 
@@ -86,6 +96,13 @@ CHOICE_PATTERNS = [
     'do you want to proceed',   # Permission prompt
 ]
 
+# Footer shown while Claude Code is actively processing (model thinking, tool running, streaming).
+# More reliable than the title-bar braille spinner, which can be absent during tool calls or
+# throttled by the terminal.
+WORKING_PATTERNS = [
+    'esc to interrupt',
+]
+
 
 def detect_attention_type(hwnd):
     """Determine what kind of attention a terminal window needs."""
@@ -106,6 +123,7 @@ def _detect_attention_from_lines(lines):
 
     Returns:
         'choice'  - Claude is asking a question or needs approval
+        'working' - Claude is actively processing (model thinking or tool running)
         'idle'    - Claude is done, waiting for next instruction
         None      - Could not determine
     """
@@ -116,6 +134,13 @@ def _detect_attention_from_lines(lines):
     for pattern in CHOICE_PATTERNS:
         if pattern in choice_text:
             return 'choice'
+
+    # "esc to interrupt" footer means the model/tool is currently running.
+    # Choice takes priority above (it also contains 'esc to cancel'), so this
+    # only matches genuine working state.
+    for pattern in WORKING_PATTERNS:
+        if pattern in choice_text:
+            return 'working'
 
     # Check the LAST non-empty line specifically.
     last_nonempty = None

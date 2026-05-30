@@ -1,3 +1,4 @@
+import gc
 import tkinter as tk
 
 from . import config as cfg
@@ -5,12 +6,17 @@ from .window_manager import WindowManager
 from .monitor_manager import MonitorManager
 from .tiling import calculate_layout, distribute_across_monitors
 from .time_tracker import TimeTracker
+from .terminal_reader import release_uia
 from .ui import PowerWidget
 
 
 class App:
     def __init__(self):
         self._root = tk.Tk()
+        # Park the root offscreen at 1x1 before withdrawing, so any stray
+        # remap (Windows DWM occasionally re-maps a withdrawn root when its
+        # Toplevel children change attributes) won't flash at (0,0).
+        self._root.geometry('1x1+-32000+-32000')
         self._root.withdraw()  # Hidden root
 
         self._monitor_mgr = MonitorManager()
@@ -18,6 +24,8 @@ class App:
         self._time_tracker = TimeTracker()
         self._selected_monitor = "All"
         self._monitor_refresh_counter = 0
+        self._refresh_after_id = None
+        self._shutting_down = False
 
         self._widget = PowerWidget(
             master=self._root,
@@ -28,6 +36,7 @@ class App:
             on_restore_all=self._on_restore_all,
             on_refresh=self._refresh,
             on_monitor_change=self._on_monitor_change,
+            on_close=self.shutdown,
         )
 
         # Exclude our own window from enumeration
@@ -37,7 +46,7 @@ class App:
         self._widget.setup_keybindings(lambda: self._window_mgr.windows)
 
         # Start refresh loop
-        self._root.after(500, self._refresh)
+        self._refresh_after_id = self._root.after(500, self._refresh)
 
     def _exclude_self(self):
         try:
@@ -49,6 +58,8 @@ class App:
 
     def _refresh(self):
         """Enumerate windows and update the UI."""
+        if self._shutting_down:
+            return
         try:
             # Refresh monitors every ~30 seconds (15 cycles), not every 2s
             self._monitor_refresh_counter += 1
@@ -63,7 +74,7 @@ class App:
             self._widget.update_window_list(windows, self._time_tracker)
         except Exception:
             pass
-        self._root.after(cfg.REFRESH_INTERVAL_MS, self._refresh)
+        self._refresh_after_id = self._root.after(cfg.REFRESH_INTERVAL_MS, self._refresh)
 
     def _on_focus(self, hwnd):
         self._window_mgr.focus_window(hwnd)
@@ -105,6 +116,47 @@ class App:
 
     def _on_monitor_change(self, value):
         self._selected_monitor = value
+
+    def shutdown(self):
+        """Orderly teardown so closing doesn't freeze for ~20s after long
+        sessions. The freeze comes from CoUninitialize releasing accumulated
+        UIA proxy refs synchronously at interpreter exit; we drop those refs
+        here while the Tk loop is still pumping messages.
+        """
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+
+        if self._refresh_after_id is not None:
+            try:
+                self._root.after_cancel(self._refresh_after_id)
+            except Exception:
+                pass
+            self._refresh_after_id = None
+
+        try:
+            self._time_tracker.force_save()
+        except Exception:
+            pass
+
+        try:
+            self._widget.reset_all_borders()
+        except Exception:
+            pass
+
+        # Drop the cached IUIAutomation reference, then run a GC pass so
+        # COM proxies created by the UIA tree walks release now (Release()
+        # IPCs to Windows Terminal happen here, not at process exit).
+        try:
+            release_uia()
+        except Exception:
+            pass
+        gc.collect()
+
+        try:
+            self._root.destroy()
+        except Exception:
+            pass
 
     def run(self):
         self._root.mainloop()

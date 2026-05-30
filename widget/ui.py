@@ -17,7 +17,7 @@ def _fmt_time(seconds):
 
 class PowerWidget(tk.Toplevel):
     def __init__(self, master, monitors, on_focus, on_tile, on_minimize_all,
-                 on_restore_all, on_refresh, on_monitor_change):
+                 on_restore_all, on_refresh, on_monitor_change, on_close=None):
         super().__init__(master)
 
         self._on_focus = on_focus
@@ -26,6 +26,7 @@ class PowerWidget(tk.Toplevel):
         self._on_restore_all = on_restore_all
         self._on_refresh = on_refresh
         self._on_monitor_change = on_monitor_change
+        self._on_close_cb = on_close
 
         self._drag_x = 0
         self._drag_y = 0
@@ -43,27 +44,36 @@ class PowerWidget(tk.Toplevel):
 
         self._nicknames = {}       # hwnd -> (nickname, title_at_assignment)
         self._editing_hwnd = None   # hwnd currently being renamed
+        self._last_snapshot = None  # last per-row signature; lets update_window_list skip rebuilds
 
         self._setup_window()
         self._setup_fonts()
         self._build_ui()
 
     def _setup_window(self):
+        # Create invisible (alpha=0) so any brief default-location mapping by
+        # Windows can't show up as a ghost flash at upper-left. withdraw() is
+        # unreliable here: Tk on Windows can map the Toplevel during
+        # super().__init__() before we get a chance to withdraw, and toggling
+        # overrideredirect forces a re-map. alpha=0 covers both cases.
+        self.attributes('-alpha', 0.0)
         self.overrideredirect(True)
         self.attributes('-topmost', True)
-        self.attributes('-alpha', 0.95)
         self.configure(bg=cfg.BG_COLOR)
-        self.geometry(f'{cfg.WIDGET_WIDTH}x{cfg.WIDGET_MIN_HEIGHT}')
 
         # Position bottom-right of primary monitor
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
-        x = screen_w - cfg.WIDGET_WIDTH - 20
-        y = screen_h - cfg.WIDGET_MIN_HEIGHT - 80
-        self.geometry(f'+{x}+{y}')
+        self._x = screen_w - cfg.WIDGET_WIDTH - 20
+        self._y = screen_h - cfg.WIDGET_MIN_HEIGHT - 80
+        self.geometry(f'{cfg.WIDGET_WIDTH}x{cfg.WIDGET_MIN_HEIGHT}+{self._x}+{self._y}')
 
         self.minsize(cfg.WIDGET_WIDTH, cfg.WIDGET_MIN_HEIGHT)
         self.maxsize(cfg.WIDGET_WIDTH, cfg.WIDGET_MAX_HEIGHT)
+
+        # Flush the geometry change before becoming visible.
+        self.update_idletasks()
+        self.attributes('-alpha', 0.95)
 
     def _setup_fonts(self):
         available = tkfont.families()
@@ -129,9 +139,9 @@ class PowerWidget(tk.Toplevel):
         self._drag_y = event.y_root - self.winfo_y()
 
     def _on_drag(self, event):
-        x = event.x_root - self._drag_x
-        y = event.y_root - self._drag_y
-        self.geometry(f'+{x}+{y}')
+        self._x = event.x_root - self._drag_x
+        self._y = event.y_root - self._drag_y
+        self.geometry(f'+{self._x}+{self._y}')
 
     def _toggle_pin(self):
         self._pinned = not self._pinned
@@ -139,7 +149,23 @@ class PowerWidget(tk.Toplevel):
         self._pin_btn.configure(fg=cfg.ACCENT_COLOR if self._pinned else cfg.FG_DIM)
 
     def _on_close(self):
-        self.master.destroy()
+        if self._on_close_cb:
+            self._on_close_cb()
+        else:
+            self.master.destroy()
+
+    def reset_all_borders(self):
+        """Reset DWM border colors for any windows we've been pulsing. Called
+        on shutdown so Claude windows aren't left wearing widget colors."""
+        self._pulse_running = False
+        self._bolt_pulse_running = False
+        for hwnd in list(self._border_pulsing) + list(self._last_border_color):
+            try:
+                reset_window_border_color(hwnd)
+            except Exception:
+                pass
+        self._border_pulsing.clear()
+        self._last_border_color.clear()
 
     def _on_minimize_widget(self):
         """Minimize by hiding the widget. Double-click tray area or use hotkey to restore."""
@@ -158,10 +184,12 @@ class PowerWidget(tk.Toplevel):
                 pass
 
         self._restore_tab = tk.Toplevel(self.master)
+        # Create invisible to avoid the upper-left flash on creation —
+        # see _setup_window for why withdraw() alone isn't enough on Windows.
+        self._restore_tab.attributes('-alpha', 0.0)
         self._restore_tab.overrideredirect(True)
         self._restore_tab.attributes('-topmost', True)
-        self._restore_tab.attributes('-alpha', 0.92)
-        self._restore_tab.configure(bg=cfg.ACCENT_COLOR)
+        self._restore_tab.configure(bg=cfg.BG_COLOR)
 
         # Position on right edge of primary monitor, vertically centered
         screen_w = self.master.winfo_screenwidth()
@@ -169,12 +197,32 @@ class PowerWidget(tk.Toplevel):
         tab_w, tab_h = 40, 100
         self._restore_tab.geometry(f'{tab_w}x{tab_h}+{screen_w - tab_w}+{screen_h // 2 - tab_h // 2}')
 
-        lbl = tk.Label(self._restore_tab, text="\u26A1\nPW", font=self._font_bold,
-                       bg=cfg.ACCENT_COLOR, fg=cfg.BG_COLOR, cursor='hand2',
-                       justify='center')
-        lbl.pack(fill='both', expand=True)
-        lbl.bind('<Button-1>', lambda e: self._restore_widget())
-        self._restore_tab.bind('<Button-1>', lambda e: self._restore_widget())
+        family = self._font.actual('family')
+        bolt_font = tkfont.Font(family=family, size=cfg.FONT_SIZE + 8, weight='bold')
+        cc_font = tkfont.Font(family=family, size=cfg.FONT_SIZE + 2, weight='bold')
+
+        bolt_lbl = tk.Label(self._restore_tab, text="\u26A1", font=bolt_font,
+                            bg=cfg.BG_COLOR, fg=cfg.ACCENT_COLOR, cursor='hand2')
+        bolt_lbl.pack(side='top', pady=(10, 0))
+        cc_lbl = tk.Label(self._restore_tab, text="CC", font=cc_font,
+                          bg=cfg.BG_COLOR, fg=cfg.FG_COLOR, cursor='hand2')
+        cc_lbl.pack(side='top')
+
+        for w in (self._restore_tab, bolt_lbl, cc_lbl):
+            w.bind('<Button-1>', lambda e: self._restore_widget())
+
+        self._restore_bolt_label = bolt_lbl
+        self._restore_cc_label = cc_lbl
+
+        # Flush the geometry change before becoming visible.
+        self._restore_tab.update_idletasks()
+        self._restore_tab.attributes('-alpha', 0.92)
+
+        # Start the bolt pulse loop (self-terminates when widget is restored)
+        if not getattr(self, '_bolt_pulse_running', False):
+            self._bolt_pulse_phase = 0.0
+            self._bolt_pulse_running = True
+            self._animate_bolt()
 
     def _restore_widget(self):
         """Restore the widget from minimized state."""
@@ -346,7 +394,7 @@ class PowerWidget(tk.Toplevel):
     def _on_resize(self, event):
         dy = event.y_root - self._resize_y
         new_h = max(cfg.WIDGET_MIN_HEIGHT, min(cfg.WIDGET_MAX_HEIGHT, self._resize_h + dy))
-        self.geometry(f'{cfg.WIDGET_WIDTH}x{new_h}')
+        self.geometry(f'{cfg.WIDGET_WIDTH}x{new_h}+{self._x}+{self._y}')
 
     def _poll_claude_status(self):
         """Fetch Claude network status in background, update UI on completion."""
@@ -370,12 +418,39 @@ class PowerWidget(tk.Toplevel):
                 except tk.TclError:
                     pass
 
+    def _compute_bolt_state(self, windows):
+        """Aggregate restore-tab state across all windows. The bolt-pulse loop reads this."""
+        has_choice = any(w.needs_attention and w.attention_type == 'choice' for w in windows)
+        has_working = any(w.is_claude and not w.needs_attention for w in windows)
+        if has_choice:
+            self._bolt_state = 'choice'
+        elif has_working:
+            self._bolt_state = 'working'
+        else:
+            self._bolt_state = 'idle'
+
     # --- Public API ---
     def update_window_list(self, windows, time_tracker=None):
         """Rebuild the window list with current windows."""
         # Don't rebuild while user is renaming a window
         if self._editing_hwnd is not None:
             return
+
+        # Bolt state can change every tick; the bolt loop reads it at 12fps regardless of rebuild.
+        self._compute_bolt_state(windows)
+
+        # Per-row signature: skip the full rebuild when nothing visible has changed.
+        # Captures everything that affects rendered rows + ordering. Time is bucketed
+        # to the minute so per-second updates don't trigger rebuilds.
+        snapshot = tuple(
+            (w.hwnd, w.display_title, bool(self._nicknames.get(w.hwnd)),
+             w.needs_attention, w.attention_type, w.is_minimized,
+             (time_tracker.get_today_seconds(w.hwnd) // 60) if time_tracker else 0)
+            for w in windows
+        )
+        if snapshot == self._last_snapshot:
+            return
+        self._last_snapshot = snapshot
 
         # Clear existing rows
         for w in self._inner_frame.winfo_children():
@@ -428,18 +503,24 @@ class PowerWidget(tk.Toplevel):
                           bg=cfg.BG_COLOR, fg=fg, anchor='w')
             lbl.pack(side='left', fill='x', expand=True, padx=(0, 4))
 
+            # Track non-main labels so the pulse loop can update their bg
+            # without iterating winfo_children() at every frame.
+            extra_labels = []
+
             # Attention indicator with type hint
             if win.needs_attention:
                 indicator = "\u2753" if win.attention_type == 'choice' else "\u2713"  # ? vs checkmark
                 attn_lbl = tk.Label(row, text=indicator, font=self._font_small,
                                     bg=cfg.BG_COLOR, fg=base_color)
                 attn_lbl.pack(side='right', padx=2)
+                extra_labels.append(attn_lbl)
 
             # Minimized indicator
             if win.is_minimized:
                 min_lbl = tk.Label(row, text="\u2500", font=self._font_small,
                                    bg=cfg.BG_COLOR, fg=cfg.FG_DIM)
                 min_lbl.pack(side='right', padx=4)
+                extra_labels.append(min_lbl)
 
             # Time tracking label
             if time_tracker:
@@ -448,12 +529,14 @@ class PowerWidget(tk.Toplevel):
                     time_lbl = tk.Label(row, text=_fmt_time(secs), font=self._font_small,
                                         bg=cfg.BG_COLOR, fg=cfg.FG_DIM)
                     time_lbl.pack(side='right', padx=(0, 4))
+                    extra_labels.append(time_lbl)
 
             # Number shortcut label
             if i < 9:
                 num_lbl = tk.Label(row, text=str(i + 1), font=self._font_small,
                                    bg=cfg.BG_COLOR, fg=cfg.FG_DIM)
                 num_lbl.pack(side='right', padx=(0, 6))
+                extra_labels.append(num_lbl)
 
             # Bind click to focus (label uses delayed click so double-click can rename)
             hwnd = win.hwnd
@@ -481,7 +564,7 @@ class PowerWidget(tk.Toplevel):
 
             # Register for pulse animation with type
             if win.needs_attention:
-                self._pulse_rows[win.hwnd] = (row, lbl, dot, dot_oval, win.attention_type)
+                self._pulse_rows[win.hwnd] = (row, lbl, dot, dot_oval, win.attention_type, extra_labels)
 
             self._window_rows.append((win.hwnd, row))
 
@@ -503,12 +586,14 @@ class PowerWidget(tk.Toplevel):
             status += f" \u2022 {attention_count} waiting"
         self._status_label.configure(text=status)
 
-        # Auto-resize height based on content
+        # Auto-resize height based on content. Always include +x+y — calling
+        # geometry() with size only on an overrideredirect+topmost+layered
+        # window can briefly snap it to (0,0) before DWM bounces it back.
         desired_h = 130 + len(windows) * (cfg.ROW_HEIGHT + 1)
         desired_h = max(cfg.WIDGET_MIN_HEIGHT, min(cfg.WIDGET_MAX_HEIGHT, desired_h))
         current_h = self.winfo_height()
         if abs(desired_h - current_h) > 20:
-            self.geometry(f'{cfg.WIDGET_WIDTH}x{desired_h}')
+            self.geometry(f'{cfg.WIDGET_WIDTH}x{desired_h}+{self._x}+{self._y}')
 
 
     def _animate_pulse(self):
@@ -529,7 +614,7 @@ class PowerWidget(tk.Toplevel):
         self._border_frame_count += 1
         update_borders = (self._border_frame_count % 6) == 0
 
-        for hwnd, (row, lbl, dot_canvas, dot_oval, atype) in self._pulse_rows.items():
+        for hwnd, (row, lbl, dot_canvas, dot_oval, atype, extras) in self._pulse_rows.items():
             # Pick color scheme based on attention type
             if atype == 'choice':
                 color_main = cfg.ATTENTION_COLOR
@@ -551,9 +636,8 @@ class PowerWidget(tk.Toplevel):
                 lbl.configure(bg=bg, fg=fg)
                 dot_canvas.configure(bg=bg)
                 dot_canvas.itemconfigure(dot_oval, fill=dot_c)
-                for child in row.winfo_children():
-                    if isinstance(child, tk.Label):
-                        child.configure(bg=bg)
+                for child in extras:
+                    child.configure(bg=bg)
             except tk.TclError:
                 pass
 
@@ -567,6 +651,29 @@ class PowerWidget(tk.Toplevel):
                 self._border_pulsing.add(hwnd)
 
         self.after(cfg.PULSE_INTERVAL_MS, self._animate_pulse)
+
+    def _animate_bolt(self):
+        """Pulse the minimized restore tab bolt in the color of the current aggregate state."""
+        if not self._minimized or not getattr(self, '_restore_bolt_label', None):
+            self._bolt_pulse_running = False
+            return
+
+        self._bolt_pulse_phase += cfg.PULSE_SPEED
+        t = (math.sin(self._bolt_pulse_phase) + 1.0) / 2.0
+        state = getattr(self, '_bolt_state', 'idle')
+        if state == 'choice':
+            c = lerp_color(cfg.ATTENTION_COLOR, cfg.ATTENTION_COLOR_BRIGHT, t)
+        elif state == 'working':
+            c = lerp_color(cfg.WORKING_COLOR, cfg.WORKING_COLOR_BRIGHT, t)
+        else:
+            c = lerp_color(cfg.IDLE_COLOR, cfg.IDLE_COLOR_BRIGHT, t)
+
+        try:
+            self._restore_bolt_label.configure(fg=c)
+        except tk.TclError:
+            pass
+
+        self.after(cfg.PULSE_INTERVAL_MS, self._animate_bolt)
 
     def update_monitors(self, monitors):
         """Update the monitor selector options."""
