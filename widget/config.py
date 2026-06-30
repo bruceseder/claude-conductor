@@ -11,24 +11,24 @@ BG_SECONDARY = "#181825"
 FG_COLOR = "#cdd6f4"
 FG_DIM = "#6c7086"
 ACCENT_COLOR = "#89b4fa"
-CLAUDE_COLOR = "#f5c2e7"
 HOVER_COLOR = "#313244"
 BUTTON_BG = "#45475a"
 BUTTON_HOVER = "#585b70"
 BORDER_COLOR = "#585b70"
-# Choice/decision pulse (orange) - Claude asking yes/no, 1/2/3
-ATTENTION_COLOR = "#ff7b00"
-ATTENTION_COLOR_BRIGHT = "#ffcc55"
+# Choice/decision pulse (HDR orange) - Claude asking yes/no, 1/2/3 (waiting)
+ATTENTION_COLOR = "#ff7a00"
+ATTENTION_COLOR_BRIGHT = "#ffd98a"
 ATTENTION_COLOR_DIM = "#5a2e00"
 
-# Idle/done pulse (teal-green) - Claude finished, waiting for next instruction
-IDLE_COLOR = "#00cc88"
-IDLE_COLOR_BRIGHT = "#66ffcc"
-IDLE_COLOR_DIM = "#004d33"
+# Idle/done pulse (HDR green) - Claude finished, waiting for next instruction
+IDLE_COLOR = "#00e676"
+IDLE_COLOR_BRIGHT = "#a6ffce"
+IDLE_COLOR_DIM = "#004d2a"
 
-# Working/processing (purple) - Claude is actively running a task
-WORKING_COLOR = "#cba6f7"
-WORKING_COLOR_BRIGHT = "#e0c1ff"
+# Working/processing (electric blue) - Claude is actively running a task
+WORKING_COLOR = "#1e9bff"
+WORKING_COLOR_BRIGHT = "#79d2ff"
+WORKING_COLOR_DIM = "#002b52"
 
 FONT_FAMILY = "Cascadia Code"
 FONT_FALLBACK = "Consolas"
@@ -65,4 +65,4 @@ CASCADE_OFFSET = 32
 
 # Attention pulse animation
 PULSE_INTERVAL_MS = 80  # ~12fps widget row animation
-PULSE_SPEED = 0.072  # Radians per frame; scaled with PULSE_INTERVAL_MS to keep the same wall-clock cycle
+PULSE_SPEED = 0.095  # Radians per frame; scaled with PULSE_INTERVAL_MS to keep the same wall-clock cycle

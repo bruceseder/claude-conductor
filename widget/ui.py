@@ -41,6 +41,7 @@ class PowerWidget(tk.Toplevel):
         self._border_pulsing = set()  # hwnds with active border pulse
         self._last_border_color = {}  # hwnd -> last hex color sent to DWM
         self._border_frame_count = 0
+        self._border_states = {}  # hwnd -> 'choice' | 'idle' | 'working' for border pulse
 
         self._nicknames = {}       # hwnd -> (nickname, title_at_assignment)
         self._editing_hwnd = None   # hwnd currently being renamed
@@ -197,18 +198,25 @@ class PowerWidget(tk.Toplevel):
         tab_w, tab_h = 40, 100
         self._restore_tab.geometry(f'{tab_w}x{tab_h}+{screen_w - tab_w}+{screen_h // 2 - tab_h // 2}')
 
+        # overrideredirect strips the native frame, so DWM border coloring can't
+        # apply here. Fake a border: the Toplevel's own bg shows through the
+        # padding around this dark content frame, and the bolt loop pulses it
+        # in the current state color.
+        content = tk.Frame(self._restore_tab, bg=cfg.BG_COLOR)
+        content.pack(fill='both', expand=True, padx=3, pady=3)
+
         family = self._font.actual('family')
         bolt_font = tkfont.Font(family=family, size=cfg.FONT_SIZE + 8, weight='bold')
         cc_font = tkfont.Font(family=family, size=cfg.FONT_SIZE + 2, weight='bold')
 
-        bolt_lbl = tk.Label(self._restore_tab, text="\u26A1", font=bolt_font,
+        bolt_lbl = tk.Label(content, text="\u26A1", font=bolt_font,
                             bg=cfg.BG_COLOR, fg=cfg.ACCENT_COLOR, cursor='hand2')
         bolt_lbl.pack(side='top', pady=(10, 0))
-        cc_lbl = tk.Label(self._restore_tab, text="CC", font=cc_font,
+        cc_lbl = tk.Label(content, text="CC", font=cc_font,
                           bg=cfg.BG_COLOR, fg=cfg.FG_COLOR, cursor='hand2')
         cc_lbl.pack(side='top')
 
-        for w in (self._restore_tab, bolt_lbl, cc_lbl):
+        for w in (self._restore_tab, content, bolt_lbl, cc_lbl):
             w.bind('<Button-1>', lambda e: self._restore_widget())
 
         self._restore_bolt_label = bolt_lbl
@@ -418,6 +426,19 @@ class PowerWidget(tk.Toplevel):
                 except tk.TclError:
                     pass
 
+    @staticmethod
+    def _state_colors(state):
+        """Return (main, bright, dim) for a window/bolt state.
+
+        working -> electric blue, choice (waiting) -> HDR orange,
+        idle (done) -> HDR green.
+        """
+        if state == 'choice':
+            return cfg.ATTENTION_COLOR, cfg.ATTENTION_COLOR_BRIGHT, cfg.ATTENTION_COLOR_DIM
+        if state == 'working':
+            return cfg.WORKING_COLOR, cfg.WORKING_COLOR_BRIGHT, cfg.WORKING_COLOR_DIM
+        return cfg.IDLE_COLOR, cfg.IDLE_COLOR_BRIGHT, cfg.IDLE_COLOR_DIM
+
     def _compute_bolt_state(self, windows):
         """Aggregate restore-tab state across all windows. The bolt-pulse loop reads this."""
         has_choice = any(w.needs_attention and w.attention_type == 'choice' for w in windows)
@@ -457,16 +478,25 @@ class PowerWidget(tk.Toplevel):
             w.destroy()
 
         self._window_rows = []
-        new_attention_hwnds = {w.hwnd for w in windows if w.needs_attention}
 
-        # Reset borders for windows that no longer need attention
-        stale = self._border_pulsing - new_attention_hwnds
+        # Every Claude window gets a state-colored border: waiting/done windows
+        # pulse orange/green, actively-working windows pulse electric blue.
+        self._border_states = {}
+        for w in windows:
+            if w.needs_attention:
+                self._border_states[w.hwnd] = 'choice' if w.attention_type == 'choice' else 'idle'
+            elif w.is_claude:
+                self._border_states[w.hwnd] = 'working'
+        border_hwnds = set(self._border_states)
+
+        # Reset borders for windows that are gone (closed / no longer tracked)
+        stale = self._border_pulsing - border_hwnds
         for hwnd in stale:
             reset_window_border_color(hwnd)
         self._border_pulsing -= stale
         # Clean up stale color cache
         for hwnd in list(self._last_border_color):
-            if hwnd not in new_attention_hwnds:
+            if hwnd not in border_hwnds:
                 del self._last_border_color[hwnd]
 
         self._pulse_rows = {}
@@ -476,13 +506,14 @@ class PowerWidget(tk.Toplevel):
             row.pack(fill='x', pady=1)
             row.pack_propagate(False)
 
-            # Color based on attention type
+            # Color based on state: choice -> orange, idle/done -> green,
+            # working -> electric blue (matches the bolt and window borders).
             if win.needs_attention and win.attention_type == 'choice':
                 base_color = cfg.ATTENTION_COLOR
             elif win.needs_attention:
                 base_color = cfg.IDLE_COLOR
             elif win.is_claude:
-                base_color = cfg.CLAUDE_COLOR
+                base_color = cfg.WORKING_COLOR
             else:
                 base_color = cfg.FG_DIM
 
@@ -568,11 +599,12 @@ class PowerWidget(tk.Toplevel):
 
             self._window_rows.append((win.hwnd, row))
 
-        # Start or stop pulse animation
-        if self._pulse_rows and not self._pulse_running:
+        # Start or stop pulse animation (drives both list-row glow and DWM borders)
+        has_pulse = bool(self._pulse_rows or self._border_states)
+        if has_pulse and not self._pulse_running:
             self._pulse_running = True
             self._animate_pulse()
-        elif not self._pulse_rows:
+        elif not has_pulse:
             self._pulse_running = False
 
         # Update status
@@ -597,13 +629,19 @@ class PowerWidget(tk.Toplevel):
 
 
     def _animate_pulse(self):
-        """Smooth pulsating glow for attention rows AND actual window borders."""
-        if not self._pulse_running or not self._pulse_rows:
+        """Pulsing glow for attention list rows AND every window's DWM border.
+
+        List rows pulse only for windows that need attention (choice/idle).
+        Borders pulse for all three states: working -> electric blue,
+        choice -> HDR orange, idle -> HDR green.
+        """
+        if not self._pulse_running or (not self._pulse_rows and not self._border_states):
             self._pulse_running = False
             # Reset any lingering border colors
             for hwnd in list(self._border_pulsing):
                 reset_window_border_color(hwnd)
             self._border_pulsing.clear()
+            self._last_border_color.clear()
             return
 
         self._pulse_phase += cfg.PULSE_SPEED
@@ -614,41 +652,33 @@ class PowerWidget(tk.Toplevel):
         self._border_frame_count += 1
         update_borders = (self._border_frame_count % 6) == 0
 
-        for hwnd, (row, lbl, dot_canvas, dot_oval, atype, extras) in self._pulse_rows.items():
-            # Pick color scheme based on attention type
-            if atype == 'choice':
-                color_main = cfg.ATTENTION_COLOR
-                color_bright = cfg.ATTENTION_COLOR_BRIGHT
-                color_dim = cfg.ATTENTION_COLOR_DIM
-            else:  # idle/done
-                color_main = cfg.IDLE_COLOR
-                color_bright = cfg.IDLE_COLOR_BRIGHT
-                color_dim = cfg.IDLE_COLOR_DIM
-
-            # Skip the per-row Tk reconfigures while minimized — the rows are
-            # hidden behind the restore tab, so only the DWM borders (below)
-            # are actually visible. The bolt loop handles the restore tab itself.
-            if not self._minimized:
+        # List-row glow — attention rows only. Skip the per-row Tk reconfigures
+        # while minimized: the rows are hidden behind the restore tab, so only
+        # the DWM borders (below) are visible. The bolt loop handles the tab.
+        if not self._minimized:
+            for hwnd, (row, lbl, dot_canvas, dot_oval, atype, extras) in self._pulse_rows.items():
+                color_main, color_bright, color_dim = self._state_colors(atype)
                 bg = lerp_color(cfg.BG_COLOR, color_dim, t)
-                dot_c = lerp_color(color_main, color_bright, t)
-                fg = lerp_color(color_main, color_bright, t)
+                glow = lerp_color(color_main, color_bright, t)
                 try:
                     row.configure(bg=bg)
-                    lbl.configure(bg=bg, fg=fg)
+                    lbl.configure(bg=bg, fg=glow)
                     dot_canvas.configure(bg=bg)
-                    dot_canvas.itemconfigure(dot_oval, fill=dot_c)
+                    dot_canvas.itemconfigure(dot_oval, fill=glow)
                     for child in extras:
                         child.configure(bg=bg)
                 except tk.TclError:
                     pass
 
-            # Pulse the actual window border + title bar via DWM (throttled)
-            if update_borders:
+        # Pulse the actual window border + title bar via DWM (throttled), one
+        # color per state across every Claude window.
+        if update_borders:
+            for hwnd, state in self._border_states.items():
+                color_main, color_bright, color_dim = self._state_colors(state)
                 border_color = lerp_color(color_main, color_bright, t)
                 caption_color = lerp_color(color_dim, color_main, t)
                 cache_key = (border_color, caption_color)
-                last = self._last_border_color.get(hwnd)
-                if last != cache_key:
+                if self._last_border_color.get(hwnd) != cache_key:
                     set_window_border_color(hwnd, border_color, caption_color)
                     self._last_border_color[hwnd] = cache_key
                 self._border_pulsing.add(hwnd)
@@ -664,15 +694,13 @@ class PowerWidget(tk.Toplevel):
         self._bolt_pulse_phase += cfg.PULSE_SPEED
         t = (math.sin(self._bolt_pulse_phase) + 1.0) / 2.0
         state = getattr(self, '_bolt_state', 'idle')
-        if state == 'choice':
-            c = lerp_color(cfg.ATTENTION_COLOR, cfg.ATTENTION_COLOR_BRIGHT, t)
-        elif state == 'working':
-            c = lerp_color(cfg.WORKING_COLOR, cfg.WORKING_COLOR_BRIGHT, t)
-        else:
-            c = lerp_color(cfg.IDLE_COLOR, cfg.IDLE_COLOR_BRIGHT, t)
+        main, bright, _dim = self._state_colors(state)
+        c = lerp_color(main, bright, t)
 
         try:
             self._restore_bolt_label.configure(fg=c)
+            if self._restore_tab:
+                self._restore_tab.configure(bg=c)
         except tk.TclError:
             pass
 

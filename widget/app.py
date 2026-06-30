@@ -1,4 +1,4 @@
-import gc
+import os
 import tkinter as tk
 
 from . import config as cfg
@@ -6,7 +6,6 @@ from .window_manager import WindowManager
 from .monitor_manager import MonitorManager
 from .tiling import calculate_layout, distribute_across_monitors
 from .time_tracker import TimeTracker
-from .terminal_reader import release_uia
 from .ui import PowerWidget
 
 
@@ -118,10 +117,14 @@ class App:
         self._selected_monitor = value
 
     def shutdown(self):
-        """Orderly teardown so closing doesn't freeze for ~20s after long
-        sessions. The freeze comes from CoUninitialize releasing accumulated
-        UIA proxy refs synchronously at interpreter exit; we drop those refs
-        here while the Tk loop is still pumping messages.
+        """Persist state, restore terminal borders, then hard-exit.
+
+        A graceful exit is slow: the UIA reads accumulate COM proxies pointing
+        into each Windows Terminal process, and comtypes' atexit CoUninitialize
+        releases them synchronously (one cross-process IPC each), freezing the
+        close for many seconds after a long session. Instead we save what
+        matters and os._exit(), letting the OS reclaim the COM proxies and
+        handles on process death — no Release() storm, no atexit freeze.
         """
         if self._shutting_down:
             return
@@ -134,6 +137,9 @@ class App:
                 pass
             self._refresh_after_id = None
 
+        # force_save closes the file (data flushed to the OS) so it survives the
+        # hard exit; reset_all_borders is synchronous DWM calls that stick after
+        # we're gone. Both must complete before os._exit.
         try:
             self._time_tracker.force_save()
         except Exception:
@@ -144,19 +150,7 @@ class App:
         except Exception:
             pass
 
-        # Drop the cached IUIAutomation reference, then run a GC pass so
-        # COM proxies created by the UIA tree walks release now (Release()
-        # IPCs to Windows Terminal happen here, not at process exit).
-        try:
-            release_uia()
-        except Exception:
-            pass
-        gc.collect()
-
-        try:
-            self._root.destroy()
-        except Exception:
-            pass
+        os._exit(0)
 
     def run(self):
         self._root.mainloop()
