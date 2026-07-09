@@ -61,6 +61,7 @@ STATUS_COLORS = {
 
 # Claude usage stats (the /usage session / week / Fable numbers)
 USAGE_POLL_INTERVAL_MS = 60000  # once per minute
+USAGE_MAX_POLL_INTERVAL_MS = 600000  # backoff cap (10 min) when rate-limited
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 USAGE_OAUTH_BETA = "oauth-2025-04-20"
 CREDENTIALS_PATH = "~/.claude/.credentials.json"  # OAuth token read fresh each poll

@@ -480,18 +480,32 @@ class PowerWidget(tk.Toplevel):
             self._usage_cells[key] = {"name": name, "canvas": canvas,
                                       "fill": fill, "pace": pace, "pct": pct}
 
+        self._usage_interval_ms = cfg.USAGE_POLL_INTERVAL_MS
         self._poll_claude_usage()
 
     def _poll_claude_usage(self):
-        """Fetch usage stats in the background, update the gauges on completion."""
-        def _on_result(results):
+        """Kick a background usage fetch, then reschedule at the current interval
+        (which backs off while rate-limited)."""
+        def _on_result(metrics, status):
             try:
-                self.after(0, lambda: self._update_usage(results))
+                self.after(0, lambda: self._on_usage_result(metrics, status))
             except Exception:
                 pass
 
         fetch_claude_usage(_on_result)
-        self.after(cfg.USAGE_POLL_INTERVAL_MS, self._poll_claude_usage)
+        self.after(self._usage_interval_ms, self._poll_claude_usage)
+
+    def _on_usage_result(self, metrics, status):
+        """Apply a fetch result: update gauges on success, otherwise keep the
+        last-good values (never blank on a transient failure) and back off the
+        poll interval when the endpoint rate-limits us."""
+        if status == "ok" and metrics is not None:
+            self._usage_interval_ms = cfg.USAGE_POLL_INTERVAL_MS  # recovered — reset backoff
+            self._update_usage(metrics)
+        elif status == "rate_limited":
+            self._usage_interval_ms = min(self._usage_interval_ms * 2,
+                                          cfg.USAGE_MAX_POLL_INTERVAL_MS)
+        # "error" (network/token): keep last-good gauges, leave interval as-is
 
     def _update_usage(self, results):
         """Redraw each gauge fill, pace marker, and percent from fetched results."""

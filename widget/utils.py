@@ -306,20 +306,54 @@ def _pace_percent(kind, resets_at):
         return None
 
 
+def _parse_usage(data):
+    """Build the (key, label, percent, pace) metric list from a usage response.
+
+    Session and weekly-all come from the always-present top-level `five_hour` /
+    `seven_day` fields — the `limits` array can omit inactive entries, which
+    would otherwise blank those two gauges. The scoped weekly (Fable) lives only
+    in the `limits` array, so it's read from there (label from the model name).
+    """
+    def _from_top(field, kind):
+        src = data.get(field) or {}
+        return src.get("utilization"), _pace_percent(kind, src.get("resets_at"))
+
+    sess_pct, sess_pace = _from_top("five_hour", "session")
+    week_pct, week_pace = _from_top("seven_day", "weekly_all")
+
+    scoped_pct = scoped_pace = None
+    scoped_label = "Fable"
+    for lim in data.get("limits", []):
+        if lim.get("kind") == "weekly_scoped":
+            scoped_pct = lim.get("percent")
+            scoped_pace = _pace_percent("weekly_scoped", lim.get("resets_at"))
+            model = ((lim.get("scope") or {}).get("model") or {}).get("display_name")
+            if model:
+                scoped_label = model
+            break
+
+    return [
+        ("session", "Sess", sess_pct, sess_pace),
+        ("weekly_all", "Week", week_pct, week_pace),
+        ("weekly_scoped", scoped_label, scoped_pct, scoped_pace),
+    ]
+
+
 def fetch_claude_usage(callback):
     """Fetch Claude usage percentages in a background thread.
 
-    Calls callback(results) where results is a list of (key, label, percent, pace)
-    tuples in cfg.USAGE_METRICS order (session, weekly, scoped/Fable). percent and
-    pace are floats 0-100, or None when unavailable.
-    """
-    def _unknown():
-        return [(key, label, None, None) for key, label in cfg.USAGE_METRICS]
+    Calls callback(metrics, status):
+      metrics — list of (key, label, percent, pace) tuples on success, else None
+      status  — "ok" | "rate_limited" | "error"
 
+    metrics is None (not a blank list) on failure so the caller can keep the
+    last-good gauges instead of wiping them. The /usage endpoint is aggressively
+    rate-limited, so 429 is surfaced distinctly to drive backoff.
+    """
     def _fetch():
         token = _usage_token()
         if not token:
-            callback(_unknown())
+            callback(None, "error")
             return
         try:
             req = urllib.request.Request(cfg.USAGE_URL, headers={
@@ -330,30 +364,14 @@ def fetch_claude_usage(callback):
             })
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
-
-            lim_by_kind = {}
-            label_by_kind = {}
-            for lim in data.get("limits", []):
-                kind = lim.get("kind")
-                if not kind:
-                    continue
-                lim_by_kind[kind] = lim
-                model = ((lim.get("scope") or {}).get("model") or {}).get("display_name")
-                if model:
-                    label_by_kind[kind] = model
-
-            results = []
-            for key, default_label in cfg.USAGE_METRICS:
-                lim = lim_by_kind.get(key) or {}
-                results.append((
-                    key,
-                    label_by_kind.get(key, default_label),
-                    lim.get("percent"),
-                    _pace_percent(key, lim.get("resets_at")),
-                ))
-            callback(results)
+        except urllib.error.HTTPError as e:
+            callback(None, "rate_limited" if e.code == 429 else "error")
+            return
         except Exception:
-            callback(_unknown())
+            callback(None, "error")
+            return
+
+        callback(_parse_usage(data), "ok")
 
     t = threading.Thread(target=_fetch, daemon=True)
     t.start()
