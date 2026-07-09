@@ -444,19 +444,21 @@ class PowerWidget(tk.Toplevel):
 
     # --- Usage Stats Bar ---
     def _build_usage_bar(self):
-        """Three mini-gauges (session / week / Fable) polled once per minute.
+        """Four mini-gauges (session / week / Fable / extra credits), polled per
+        cfg.USAGE_POLL_INTERVAL_MS.
 
         Each cell: a label, a filling gauge colored by how full it is, a thin red
-        pace marker showing where usage would be at even consumption, and the %.
+        pace marker showing where usage would be at even consumption, and a
+        readout (percent, or for credits the dollars still available).
         """
-        frame = tk.Frame(self, bg=cfg.BG_SECONDARY, height=26)
+        frame = tk.Frame(self, bg=cfg.BG_SECONDARY, height=cfg.USAGE_BAR_HEIGHT)
         frame.pack(fill='x', side='bottom')
         frame.pack_propagate(False)
 
         self._usage_cells = {}
         for key, label in cfg.USAGE_METRICS:
             cell = tk.Frame(frame, bg=cfg.BG_SECONDARY)
-            cell.pack(side='left', expand=True, fill='both', padx=(6, 0))
+            cell.pack(side='left', expand=True, fill='both', padx=(2, 0))
 
             name = tk.Label(cell, text=label, font=self._font_small,
                             bg=cfg.BG_SECONDARY, fg=cfg.FG_COLOR)
@@ -464,7 +466,7 @@ class PowerWidget(tk.Toplevel):
 
             canvas = tk.Canvas(cell, width=cfg.USAGE_GAUGE_W, height=cfg.USAGE_GAUGE_H,
                                bg=cfg.BG_SECONDARY, highlightthickness=0, bd=0)
-            canvas.pack(side='left', padx=4)
+            canvas.pack(side='left', padx=2)
             canvas.create_rectangle(0, 0, cfg.USAGE_GAUGE_W, cfg.USAGE_GAUGE_H,
                                     fill=cfg.USAGE_TRACK_COLOR, outline="")
             fill = canvas.create_rectangle(0, 0, 0, cfg.USAGE_GAUGE_H,
@@ -508,8 +510,8 @@ class PowerWidget(tk.Toplevel):
         # "error" (network/token): keep last-good gauges, leave interval as-is
 
     def _update_usage(self, results):
-        """Redraw each gauge fill, pace marker, and percent from fetched results."""
-        for key, label, pct, pace in results:
+        """Redraw each gauge fill, pace marker, and readout from fetched results."""
+        for key, label, pct, pace, text in results:
             cell = self._usage_cells.get(key)
             if not cell:
                 continue
@@ -525,7 +527,7 @@ class PowerWidget(tk.Toplevel):
                     color = _usage_color(p)
                     canvas.coords(cell["fill"], 0, 0, cfg.USAGE_GAUGE_W * p / 100.0, cfg.USAGE_GAUGE_H)
                     canvas.itemconfigure(cell["fill"], fill=color)
-                    cell["pct"].configure(text=f"{int(round(p))}%", fg=color)
+                    cell["pct"].configure(text=text if text is not None else f"{int(round(p))}%", fg=color)
                     if pace is None:
                         canvas.itemconfigure(cell["pace"], state='hidden')
                     else:
@@ -730,7 +732,7 @@ class PowerWidget(tk.Toplevel):
         # Auto-resize height based on content. Always include +x+y — calling
         # geometry() with size only on an overrideredirect+topmost+layered
         # window can briefly snap it to (0,0) before DWM bounces it back.
-        desired_h = 130 + len(windows) * (cfg.ROW_HEIGHT + 1)
+        desired_h = 130 + cfg.USAGE_BAR_HEIGHT + len(windows) * (cfg.ROW_HEIGHT + 1)
         desired_h = max(cfg.WIDGET_MIN_HEIGHT, min(cfg.WIDGET_MAX_HEIGHT, desired_h))
         current_h = self.winfo_height()
         if abs(desired_h - current_h) > 20:

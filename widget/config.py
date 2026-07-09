@@ -74,6 +74,7 @@ USAGE_METRICS = [
     ("session", "Sess"),        # current 5-hour session window
     ("weekly_all", "Week"),     # current week, all models
     ("weekly_scoped", "Fable"),  # current week, most-capable model (label from API)
+    ("credits", "Extra"),       # extra-usage credit balance (gauge=used%, text=$ available)
 ]
 # Window length per metric; used to place the pace marker (elapsed fraction of
 # the window = where usage "should" be if consumed evenly). resets_at from the
@@ -83,7 +84,8 @@ USAGE_WINDOW_SECONDS = {
     "weekly_all": 7 * 86400,
     "weekly_scoped": 7 * 86400,
 }
-USAGE_GAUGE_W = 40  # mini-bar gauge width (px)
+USAGE_BAR_HEIGHT = 26  # height of the usage-stats row (px); reserved in auto-resize
+USAGE_GAUGE_W = 18  # mini-bar gauge width (px) — narrow so 4 cells fit the 340px row
 USAGE_GAUGE_H = 8   # mini-bar gauge height (px)
 USAGE_TRACK_COLOR = "#313244"  # unfilled gauge track
 USAGE_PACE_COLOR = "#ff3355"   # thin pace/target marker line

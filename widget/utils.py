@@ -307,12 +307,16 @@ def _pace_percent(kind, resets_at):
 
 
 def _parse_usage(data):
-    """Build the (key, label, percent, pace) metric list from a usage response.
+    """Build the (key, label, percent, pace, text) metric list from a usage
+    response. `percent` drives the gauge fill/color; `text` overrides the
+    readout label (None => show "<percent>%"); `pace` places the marker (None
+    => no marker).
 
     Session and weekly-all come from the always-present top-level `five_hour` /
     `seven_day` fields — the `limits` array can omit inactive entries, which
     would otherwise blank those two gauges. The scoped weekly (Fable) lives only
     in the `limits` array, so it's read from there (label from the model name).
+    The extra-usage credit balance comes from `spend`.
     """
     def _from_top(field, kind):
         src = data.get(field) or {}
@@ -333,10 +337,33 @@ def _parse_usage(data):
             break
 
     return [
-        ("session", "Sess", sess_pct, sess_pace),
-        ("weekly_all", "Week", week_pct, week_pace),
-        ("weekly_scoped", scoped_label, scoped_pct, scoped_pace),
+        ("session", "Sess", sess_pct, sess_pace, None),
+        ("weekly_all", "Week", week_pct, week_pace, None),
+        ("weekly_scoped", scoped_label, scoped_pct, scoped_pace, None),
+        ("credits", "Extra", *_credits(data.get("spend"))),
     ]
+
+
+def _credits(spend):
+    """From the `spend` block return (used_percent, pace=None, available_text).
+
+    The gauge shows how much of the extra-usage cap is consumed; the text shows
+    the dollars still available. Returns (None, None, None) when extra usage is
+    disabled/absent.
+    """
+    if not spend or not spend.get("enabled"):
+        return None, None, None
+    used = spend.get("used") or {}
+    limit = spend.get("limit") or {}
+    exp = used.get("exponent", limit.get("exponent", 2))
+    used_minor = used.get("amount_minor")
+    limit_minor = limit.get("amount_minor")
+    text = None
+    if used_minor is not None and limit_minor is not None:
+        available = (limit_minor - used_minor) / (10 ** exp)
+        sym = "$" if used.get("currency") == "USD" else ""
+        text = f"{sym}{int(round(available))}"
+    return spend.get("percent"), None, text
 
 
 def fetch_claude_usage(callback):
