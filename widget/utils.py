@@ -366,12 +366,27 @@ def _credits(spend):
     return spend.get("percent"), None, text
 
 
+def _spend_summary(spend):
+    """'$165 / $200' (used / cap) from the spend block, or None when unavailable."""
+    if not spend or not spend.get("enabled"):
+        return None
+    used = spend.get("used") or {}
+    limit = spend.get("limit") or {}
+    exp = used.get("exponent", limit.get("exponent", 2))
+    um, lm = used.get("amount_minor"), limit.get("amount_minor")
+    if um is None or lm is None:
+        return None
+    sym = "$" if used.get("currency") == "USD" else ""
+    return f"{sym}{int(round(um / 10 ** exp))} / {sym}{int(round(lm / 10 ** exp))}"
+
+
 def fetch_claude_usage(callback):
     """Fetch Claude usage percentages in a background thread.
 
-    Calls callback(metrics, status):
-      metrics — list of (key, label, percent, pace) tuples on success, else None
-      status  — "ok" | "rate_limited" | "error"
+    Calls callback(metrics, status, spend_text):
+      metrics    — list of (key, label, percent, pace, text) tuples, else None
+      status     — "ok" | "rate_limited" | "error"
+      spend_text — "$165 / $200" (extra-usage used/cap) for the status bar, or None
 
     metrics is None (not a blank list) on failure so the caller can keep the
     last-good gauges instead of wiping them. The /usage endpoint is aggressively
@@ -380,7 +395,7 @@ def fetch_claude_usage(callback):
     def _fetch():
         token = _usage_token()
         if not token:
-            callback(None, "error")
+            callback(None, "error", None)
             return
         try:
             req = urllib.request.Request(cfg.USAGE_URL, headers={
@@ -392,13 +407,13 @@ def fetch_claude_usage(callback):
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
-            callback(None, "rate_limited" if e.code == 429 else "error")
+            callback(None, "rate_limited" if e.code == 429 else "error", None)
             return
         except Exception:
-            callback(None, "error")
+            callback(None, "error", None)
             return
 
-        callback(_parse_usage(data), "ok")
+        callback(_parse_usage(data), "ok", _spend_summary(data.get("spend")))
 
     t = threading.Thread(target=_fetch, daemon=True)
     t.start()

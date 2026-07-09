@@ -386,7 +386,9 @@ class PowerWidget(tk.Toplevel):
         self._status_frame.pack(fill='x', side='bottom')
         self._status_frame.pack_propagate(False)
 
-        self._status_label = tk.Label(self._status_frame, text="0 windows",
+        # Bottom-left readout: extra-usage spend ($used / $cap), set from the
+        # usage poll. "--" until the first successful fetch.
+        self._status_label = tk.Label(self._status_frame, text="--",
                                        font=self._font_small, bg=cfg.BG_SECONDARY,
                                        fg=cfg.FG_DIM, anchor='w')
         self._status_label.pack(side='left', padx=8, fill='y')
@@ -488,26 +490,28 @@ class PowerWidget(tk.Toplevel):
     def _poll_claude_usage(self):
         """Kick a background usage fetch, then reschedule at the current interval
         (which backs off while rate-limited)."""
-        def _on_result(metrics, status):
+        def _on_result(metrics, status, spend_text):
             try:
-                self.after(0, lambda: self._on_usage_result(metrics, status))
+                self.after(0, lambda: self._on_usage_result(metrics, status, spend_text))
             except Exception:
                 pass
 
         fetch_claude_usage(_on_result)
         self.after(self._usage_interval_ms, self._poll_claude_usage)
 
-    def _on_usage_result(self, metrics, status):
-        """Apply a fetch result: update gauges on success, otherwise keep the
-        last-good values (never blank on a transient failure) and back off the
-        poll interval when the endpoint rate-limits us."""
+    def _on_usage_result(self, metrics, status, spend_text):
+        """Apply a fetch result: update gauges + the bottom-left spend readout on
+        success, otherwise keep the last-good values (never blank on a transient
+        failure) and back off the poll interval when the endpoint rate-limits us."""
         if status == "ok" and metrics is not None:
             self._usage_interval_ms = cfg.USAGE_POLL_INTERVAL_MS  # recovered — reset backoff
             self._update_usage(metrics)
+            if spend_text:
+                self._status_label.configure(text=spend_text)  # bottom-left = extra $used/$cap
         elif status == "rate_limited":
             self._usage_interval_ms = min(self._usage_interval_ms * 2,
                                           cfg.USAGE_MAX_POLL_INTERVAL_MS)
-        # "error" (network/token): keep last-good gauges, leave interval as-is
+        # "error" (network/token): keep last-good gauges + spend text, leave interval as-is
 
     def _update_usage(self, results):
         """Redraw each gauge fill, pace marker, and readout from fetched results."""
@@ -718,16 +722,8 @@ class PowerWidget(tk.Toplevel):
         elif not has_pulse:
             self._pulse_running = False
 
-        # Update status
-        total = len(windows)
-        claude_count = sum(1 for w in windows if w.is_claude)
-        attention_count = sum(1 for w in windows if w.needs_attention)
-        status = f"{total} window{'s' if total != 1 else ''}"
-        if claude_count > 0:
-            status += f" ({claude_count} Claude)"
-        if attention_count > 0:
-            status += f" \u2022 {attention_count} waiting"
-        self._status_label.configure(text=status)
+        # (Bottom-left status label now shows extra-usage spend, set by the usage
+        # poll in _on_usage_result \u2014 no longer the window count.)
 
         # Auto-resize height based on content. Always include +x+y — calling
         # geometry() with size only on an overrideredirect+topmost+layered
