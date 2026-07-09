@@ -1,9 +1,11 @@
 import ctypes
 import ctypes.wintypes
 import json
+import os
 import threading
 import urllib.request
 import urllib.error
+from datetime import datetime, timezone
 import win32gui
 import win32con
 import pywintypes
@@ -270,6 +272,88 @@ def fetch_claude_status(callback):
                 callback(results)
         except Exception:
             callback([(name, "unknown", "?") for name in cfg.STATUS_COMPONENTS.values()])
+
+    t = threading.Thread(target=_fetch, daemon=True)
+    t.start()
+
+
+# --- Claude Usage Stats (the /usage session / week / Fable numbers) ---
+
+
+def _usage_token():
+    """Read the current OAuth access token from Claude Code's credentials file.
+
+    Read fresh on every poll so token refreshes performed by Claude Code are
+    picked up automatically. Returns None if the file or token is unavailable.
+    """
+    try:
+        with open(os.path.expanduser(cfg.CREDENTIALS_PATH), "r", encoding="utf-8") as f:
+            return json.load(f).get("claudeAiOauth", {}).get("accessToken")
+    except Exception:
+        return None
+
+
+def _pace_percent(kind, resets_at):
+    """Where usage 'should' be if the window is consumed evenly: the elapsed
+    fraction of the window as a 0-100 percent. resets_at is the window end."""
+    duration = cfg.USAGE_WINDOW_SECONDS.get(kind)
+    if not duration or not resets_at:
+        return None
+    try:
+        remaining = (datetime.fromisoformat(resets_at) - datetime.now(timezone.utc)).total_seconds()
+        return max(0.0, min(100.0, (duration - remaining) / duration * 100.0))
+    except Exception:
+        return None
+
+
+def fetch_claude_usage(callback):
+    """Fetch Claude usage percentages in a background thread.
+
+    Calls callback(results) where results is a list of (key, label, percent, pace)
+    tuples in cfg.USAGE_METRICS order (session, weekly, scoped/Fable). percent and
+    pace are floats 0-100, or None when unavailable.
+    """
+    def _unknown():
+        return [(key, label, None, None) for key, label in cfg.USAGE_METRICS]
+
+    def _fetch():
+        token = _usage_token()
+        if not token:
+            callback(_unknown())
+            return
+        try:
+            req = urllib.request.Request(cfg.USAGE_URL, headers={
+                "Authorization": f"Bearer {token}",
+                "anthropic-beta": cfg.USAGE_OAUTH_BETA,
+                "anthropic-version": "2023-06-01",
+                "User-Agent": "PowerWidget/1.0",
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+
+            lim_by_kind = {}
+            label_by_kind = {}
+            for lim in data.get("limits", []):
+                kind = lim.get("kind")
+                if not kind:
+                    continue
+                lim_by_kind[kind] = lim
+                model = ((lim.get("scope") or {}).get("model") or {}).get("display_name")
+                if model:
+                    label_by_kind[kind] = model
+
+            results = []
+            for key, default_label in cfg.USAGE_METRICS:
+                lim = lim_by_kind.get(key) or {}
+                results.append((
+                    key,
+                    label_by_kind.get(key, default_label),
+                    lim.get("percent"),
+                    _pace_percent(key, lim.get("resets_at")),
+                ))
+            callback(results)
+        except Exception:
+            callback(_unknown())
 
     t = threading.Thread(target=_fetch, daemon=True)
     t.start()

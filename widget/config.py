@@ -59,6 +59,35 @@ STATUS_COLORS = {
     "unknown": "#6c7086",              # dim - can't reach
 }
 
+# Claude usage stats (the /usage session / week / Fable numbers)
+USAGE_POLL_INTERVAL_MS = 60000  # once per minute
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+USAGE_OAUTH_BETA = "oauth-2025-04-20"
+CREDENTIALS_PATH = "~/.claude/.credentials.json"  # OAuth token read fresh each poll
+# Metrics we surface, in display order: (limits[].kind, fallback label)
+USAGE_METRICS = [
+    ("session", "Sess"),        # current 5-hour session window
+    ("weekly_all", "Week"),     # current week, all models
+    ("weekly_scoped", "Fable"),  # current week, most-capable model (label from API)
+]
+# Window length per metric; used to place the pace marker (elapsed fraction of
+# the window = where usage "should" be if consumed evenly). resets_at from the
+# API is the window end.
+USAGE_WINDOW_SECONDS = {
+    "session": 5 * 3600,
+    "weekly_all": 7 * 86400,
+    "weekly_scoped": 7 * 86400,
+}
+USAGE_GAUGE_W = 40  # mini-bar gauge width (px)
+USAGE_GAUGE_H = 8   # mini-bar gauge height (px)
+USAGE_TRACK_COLOR = "#313244"  # unfilled gauge track
+USAGE_PACE_COLOR = "#ff3355"   # thin pace/target marker line
+# Fill color by how full the metric is (green -> amber -> red)
+USAGE_COLOR_LOW = "#a6e3a1"    # < 50%
+USAGE_COLOR_MID = "#f9e2af"    # 50-79%
+USAGE_COLOR_HIGH = "#fab387"   # 80-94%
+USAGE_COLOR_CRIT = "#f38ba8"   # >= 95%
+
 # Tiling
 TILE_GAP = 6
 CASCADE_OFFSET = 32

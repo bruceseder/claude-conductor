@@ -3,7 +3,21 @@ import tkinter as tk
 from tkinter import font as tkfont
 
 from . import config as cfg
-from .utils import lerp_color, set_window_border_color, reset_window_border_color, fetch_claude_status
+from .utils import (
+    lerp_color, set_window_border_color, reset_window_border_color,
+    fetch_claude_status, fetch_claude_usage,
+)
+
+
+def _usage_color(pct):
+    """Gauge fill color by how full a usage metric is."""
+    if pct >= 95:
+        return cfg.USAGE_COLOR_CRIT
+    if pct >= 80:
+        return cfg.USAGE_COLOR_HIGH
+    if pct >= 50:
+        return cfg.USAGE_COLOR_MID
+    return cfg.USAGE_COLOR_LOW
 
 
 def _fmt_time(seconds):
@@ -95,6 +109,8 @@ class PowerWidget(tk.Toplevel):
         tk.Frame(self, bg=cfg.BORDER_COLOR, height=1).pack(fill='x', padx=8)
         # Status bar (pack before window list so it always has space)
         self._build_status_bar()
+        # Usage stats bar (sits just above the status bar)
+        self._build_usage_bar()
         # Window list (expands to fill remaining space)
         self._build_window_list()
 
@@ -425,6 +441,85 @@ class PowerWidget(tk.Toplevel):
                     lbl.configure(fg=color)
                 except tk.TclError:
                     pass
+
+    # --- Usage Stats Bar ---
+    def _build_usage_bar(self):
+        """Three mini-gauges (session / week / Fable) polled once per minute.
+
+        Each cell: a label, a filling gauge colored by how full it is, a thin red
+        pace marker showing where usage would be at even consumption, and the %.
+        """
+        frame = tk.Frame(self, bg=cfg.BG_SECONDARY, height=26)
+        frame.pack(fill='x', side='bottom')
+        frame.pack_propagate(False)
+
+        self._usage_cells = {}
+        for key, label in cfg.USAGE_METRICS:
+            cell = tk.Frame(frame, bg=cfg.BG_SECONDARY)
+            cell.pack(side='left', expand=True, fill='both', padx=(6, 0))
+
+            name = tk.Label(cell, text=label, font=self._font_small,
+                            bg=cfg.BG_SECONDARY, fg=cfg.FG_DIM)
+            name.pack(side='left')
+
+            canvas = tk.Canvas(cell, width=cfg.USAGE_GAUGE_W, height=cfg.USAGE_GAUGE_H,
+                               bg=cfg.BG_SECONDARY, highlightthickness=0, bd=0)
+            canvas.pack(side='left', padx=4)
+            canvas.create_rectangle(0, 0, cfg.USAGE_GAUGE_W, cfg.USAGE_GAUGE_H,
+                                    fill=cfg.USAGE_TRACK_COLOR, outline="")
+            fill = canvas.create_rectangle(0, 0, 0, cfg.USAGE_GAUGE_H,
+                                           fill=cfg.FG_DIM, outline="")
+            # Pace marker drawn last so it sits on top of the fill; hidden until known.
+            pace = canvas.create_line(0, 0, 0, cfg.USAGE_GAUGE_H,
+                                      fill=cfg.USAGE_PACE_COLOR, width=1, state='hidden')
+
+            pct = tk.Label(cell, text="--", font=self._font_small, bg=cfg.BG_SECONDARY,
+                           fg=cfg.FG_DIM, width=4, anchor='w')
+            pct.pack(side='left')
+
+            self._usage_cells[key] = {"name": name, "canvas": canvas,
+                                      "fill": fill, "pace": pace, "pct": pct}
+
+        self._poll_claude_usage()
+
+    def _poll_claude_usage(self):
+        """Fetch usage stats in the background, update the gauges on completion."""
+        def _on_result(results):
+            try:
+                self.after(0, lambda: self._update_usage(results))
+            except Exception:
+                pass
+
+        fetch_claude_usage(_on_result)
+        self.after(cfg.USAGE_POLL_INTERVAL_MS, self._poll_claude_usage)
+
+    def _update_usage(self, results):
+        """Redraw each gauge fill, pace marker, and percent from fetched results."""
+        for key, label, pct, pace in results:
+            cell = self._usage_cells.get(key)
+            if not cell:
+                continue
+            try:
+                cell["name"].configure(text=label)
+                canvas = cell["canvas"]
+                if pct is None:
+                    canvas.coords(cell["fill"], 0, 0, 0, cfg.USAGE_GAUGE_H)
+                    canvas.itemconfigure(cell["pace"], state='hidden')
+                    cell["pct"].configure(text="--", fg=cfg.FG_DIM)
+                else:
+                    p = max(0.0, min(100.0, float(pct)))
+                    color = _usage_color(p)
+                    canvas.coords(cell["fill"], 0, 0, cfg.USAGE_GAUGE_W * p / 100.0, cfg.USAGE_GAUGE_H)
+                    canvas.itemconfigure(cell["fill"], fill=color)
+                    cell["pct"].configure(text=f"{int(round(p))}%", fg=color)
+                    if pace is None:
+                        canvas.itemconfigure(cell["pace"], state='hidden')
+                    else:
+                        x = cfg.USAGE_GAUGE_W * max(0.0, min(100.0, float(pace))) / 100.0
+                        canvas.coords(cell["pace"], x, 0, x, cfg.USAGE_GAUGE_H)
+                        canvas.itemconfigure(cell["pace"], state='normal')
+            except tk.TclError:
+                pass
 
     @staticmethod
     def _state_colors(state):
