@@ -73,6 +73,15 @@ Time is accumulated from three sources:
 
 Time is displayed per-row in the widget and persisted to `claude_time.json`, keyed by `project_directory|date`. Multiple windows in the same project directory accumulate into the same bucket.
 
+### Usage Stats
+
+A compact row of live gauges mirrors Claude Code's `/usage` view so you can track your limits without leaving your work:
+
+- **Session** (5-hour rolling window), **Week** (all models), and **Fable** (the weekly limit for the most-capable model) — each a mini-gauge that fills green → amber → red as you approach the limit, showing the percent plus a thin red **pace marker** for where your usage "should" be at even (wall-clock) consumption.
+- **Extra** — an extra-usage credits gauge in the bottom status row (beside the Code / API / Web service indicators) showing `$used / $cap`.
+
+The numbers come from Anthropic's OAuth usage endpoint, authenticated with the token Claude Code already stores (read fresh each poll, so token refreshes are picked up automatically). That subscription endpoint is meant for *sparing* checks — frequent polling is rate-limited and can consume a small percentage of your 5-hour session limit — so the widget polls once every **15 minutes**, backs off exponentially on a rate-limit (429) response, and keeps the last-good values rather than blanking on a transient failure.
+
 ### Widget UI
 
 - Dark theme matching terminal aesthetics (Catppuccin Mocha inspired)
@@ -124,7 +133,7 @@ Finds windows by Win32 class name (`CASCADIA_HOSTING_WINDOW_CLASS` for Windows T
 
 ### Terminal Text Reading
 
-Uses the Windows UI Automation COM API to walk the accessibility tree of each terminal window, find the `TermControl` element, and read its `TextPattern` content. This gives access to the full terminal buffer (up to 200KB) to detect what state Claude is in.
+Uses the Windows UI Automation COM API to walk the accessibility tree of each terminal window, find the `TermControl` element, and read its `TextPattern` content to detect what state Claude is in. Windows Terminal exposes roughly the on-screen viewport (~30 lines) through this API rather than the full scrollback, so the read is cheap (sub-millisecond) regardless of session length. The `TermControl` element is cached per window to skip re-walking the tree on every poll.
 
 ### DWM Border Pulsing
 
