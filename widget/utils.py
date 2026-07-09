@@ -316,7 +316,7 @@ def _parse_usage(data):
     `seven_day` fields — the `limits` array can omit inactive entries, which
     would otherwise blank those two gauges. The scoped weekly (Fable) lives only
     in the `limits` array, so it's read from there (label from the model name).
-    The extra-usage credit balance comes from `spend`.
+    (Extra-usage credits are surfaced separately via _spend_info, not here.)
     """
     def _from_top(field, kind):
         src = data.get(field) or {}
@@ -340,53 +340,32 @@ def _parse_usage(data):
         ("session", "Sess", sess_pct, sess_pace, None),
         ("weekly_all", "Week", week_pct, week_pace, None),
         ("weekly_scoped", scoped_label, scoped_pct, scoped_pace, None),
-        ("credits", "Extra", *_credits(data.get("spend"))),
     ]
 
 
-def _credits(spend):
-    """From the `spend` block return (used_percent, pace=None, available_text).
-
-    The gauge shows how much of the extra-usage cap is consumed; the text shows
-    the dollars still available. Returns (None, None, None) when extra usage is
-    disabled/absent.
-    """
-    if not spend or not spend.get("enabled"):
-        return None, None, None
-    used = spend.get("used") or {}
-    limit = spend.get("limit") or {}
-    exp = used.get("exponent", limit.get("exponent", 2))
-    used_minor = used.get("amount_minor")
-    limit_minor = limit.get("amount_minor")
-    text = None
-    if used_minor is not None and limit_minor is not None:
-        available = (limit_minor - used_minor) / (10 ** exp)
-        sym = "$" if used.get("currency") == "USD" else ""
-        text = f"{sym}{int(round(available))}"
-    return spend.get("percent"), None, text
-
-
-def _spend_summary(spend):
-    """'$165 / $200' (used / cap) from the spend block, or None when unavailable."""
+def _spend_info(spend):
+    """Extra-usage readout for the status-bar gauge: (used_percent, '$165 / $200'),
+    or None when extra usage is disabled/absent. Text is None if amounts missing."""
     if not spend or not spend.get("enabled"):
         return None
     used = spend.get("used") or {}
     limit = spend.get("limit") or {}
     exp = used.get("exponent", limit.get("exponent", 2))
     um, lm = used.get("amount_minor"), limit.get("amount_minor")
-    if um is None or lm is None:
-        return None
-    sym = "$" if used.get("currency") == "USD" else ""
-    return f"{sym}{int(round(um / 10 ** exp))} / {sym}{int(round(lm / 10 ** exp))}"
+    text = None
+    if um is not None and lm is not None:
+        sym = "$" if used.get("currency") == "USD" else ""
+        text = f"{sym}{int(round(um / 10 ** exp))} / {sym}{int(round(lm / 10 ** exp))}"
+    return spend.get("percent"), text
 
 
 def fetch_claude_usage(callback):
     """Fetch Claude usage percentages in a background thread.
 
     Calls callback(metrics, status, spend_text):
-      metrics    — list of (key, label, percent, pace, text) tuples, else None
-      status     — "ok" | "rate_limited" | "error"
-      spend_text — "$165 / $200" (extra-usage used/cap) for the status bar, or None
+      metrics — list of (key, label, percent, pace, text) tuples, else None
+      status  — "ok" | "rate_limited" | "error"
+      spend   — (used_percent, "$165 / $200") for the status-bar Extra gauge, or None
 
     metrics is None (not a blank list) on failure so the caller can keep the
     last-good gauges instead of wiping them. The /usage endpoint is aggressively
@@ -413,7 +392,7 @@ def fetch_claude_usage(callback):
             callback(None, "error", None)
             return
 
-        callback(_parse_usage(data), "ok", _spend_summary(data.get("spend")))
+        callback(_parse_usage(data), "ok", _spend_info(data.get("spend")))
 
     t = threading.Thread(target=_fetch, daemon=True)
     t.start()

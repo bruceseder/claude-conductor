@@ -386,12 +386,12 @@ class PowerWidget(tk.Toplevel):
         self._status_frame.pack(fill='x', side='bottom')
         self._status_frame.pack_propagate(False)
 
-        # Bottom-left readout: extra-usage spend ($used / $cap), set from the
-        # usage poll. "--" until the first successful fetch.
-        self._status_label = tk.Label(self._status_frame, text="--",
-                                       font=self._font_small, bg=cfg.BG_SECONDARY,
-                                       fg=cfg.FG_DIM, anchor='w')
-        self._status_label.pack(side='left', padx=8, fill='y')
+        # Bottom-left: extra-usage gauge ("Extra") + $used/$cap, shares this row
+        # with the Code/API/Web indicators. Set from the usage poll (in
+        # _on_usage_result); "--" until the first successful fetch.
+        cell, self._credits_cell = self._make_gauge_cell(self._status_frame, "Extra",
+                                                         readout_width=13)
+        cell.pack(side='left', padx=8)
 
         # Resize grip
         grip = tk.Label(self._status_frame, text="\u2261", font=self._font_icon,
@@ -445,44 +445,63 @@ class PowerWidget(tk.Toplevel):
                     pass
 
     # --- Usage Stats Bar ---
-    def _build_usage_bar(self):
-        """Four mini-gauges (session / week / Fable / extra credits), polled per
-        cfg.USAGE_POLL_INTERVAL_MS.
+    def _make_gauge_cell(self, parent, label, readout_width):
+        """Create a labeled mini-gauge (track + fill + hidden pace marker + readout)
+        in a new cell frame. Returns (cell_frame, gauge_dict); the caller packs the
+        frame. Shared by the usage row and the status-bar extra-credits gauge."""
+        cell = tk.Frame(parent, bg=cfg.BG_SECONDARY)
+        name = tk.Label(cell, text=label, font=self._font_small,
+                        bg=cfg.BG_SECONDARY, fg=cfg.FG_COLOR)
+        name.pack(side='left')
+        canvas = tk.Canvas(cell, width=cfg.USAGE_GAUGE_W, height=cfg.USAGE_GAUGE_H,
+                           bg=cfg.BG_SECONDARY, highlightthickness=0, bd=0)
+        canvas.pack(side='left', padx=3)
+        canvas.create_rectangle(0, 0, cfg.USAGE_GAUGE_W, cfg.USAGE_GAUGE_H,
+                                fill=cfg.USAGE_TRACK_COLOR, outline="")
+        fill = canvas.create_rectangle(0, 0, 0, cfg.USAGE_GAUGE_H, fill=cfg.FG_DIM, outline="")
+        # Pace marker drawn last so it sits on top of the fill; hidden until known.
+        pace = canvas.create_line(0, 0, 0, cfg.USAGE_GAUGE_H,
+                                  fill=cfg.USAGE_PACE_COLOR, width=1, state='hidden')
+        readout = tk.Label(cell, text="--", font=self._font_small, bg=cfg.BG_SECONDARY,
+                           fg=cfg.FG_DIM, width=readout_width, anchor='w')
+        readout.pack(side='left')
+        return cell, {"name": name, "canvas": canvas, "fill": fill, "pace": pace, "pct": readout}
 
-        Each cell: a label, a filling gauge colored by how full it is, a thin red
-        pace marker showing where usage would be at even consumption, and a
-        readout (percent, or for credits the dollars still available).
-        """
+    def _render_gauge(self, cell, pct, pace, text):
+        """Draw one gauge: fill width/color by pct, optional pace marker, and the
+        readout text (falls back to '<pct>%'). pct=None blanks the cell to '--'."""
+        canvas = cell["canvas"]
+        if pct is None:
+            canvas.coords(cell["fill"], 0, 0, 0, cfg.USAGE_GAUGE_H)
+            canvas.itemconfigure(cell["pace"], state='hidden')
+            cell["pct"].configure(text="--", fg=cfg.FG_DIM)
+            return
+        p = max(0.0, min(100.0, float(pct)))
+        color = _usage_color(p)
+        canvas.coords(cell["fill"], 0, 0, cfg.USAGE_GAUGE_W * p / 100.0, cfg.USAGE_GAUGE_H)
+        canvas.itemconfigure(cell["fill"], fill=color)
+        cell["pct"].configure(text=text if text is not None else f"{int(round(p))}%", fg=color)
+        if pace is None:
+            canvas.itemconfigure(cell["pace"], state='hidden')
+        else:
+            x = cfg.USAGE_GAUGE_W * max(0.0, min(100.0, float(pace))) / 100.0
+            canvas.coords(cell["pace"], x, 0, x, cfg.USAGE_GAUGE_H)
+            canvas.itemconfigure(cell["pace"], state='normal')
+
+    def _build_usage_bar(self):
+        """Three mini-gauges (session / week / Fable), polled per
+        cfg.USAGE_POLL_INTERVAL_MS. The extra-usage credits gauge lives in the
+        status bar (see _build_status_bar). Each cell: a label, a filling gauge
+        colored by how full it is, a thin red pace marker, and a percent."""
         frame = tk.Frame(self, bg=cfg.BG_SECONDARY, height=cfg.USAGE_BAR_HEIGHT)
         frame.pack(fill='x', side='bottom')
         frame.pack_propagate(False)
 
         self._usage_cells = {}
         for key, label in cfg.USAGE_METRICS:
-            cell = tk.Frame(frame, bg=cfg.BG_SECONDARY)
-            cell.pack(side='left', expand=True, fill='both', padx=(2, 0))
-
-            name = tk.Label(cell, text=label, font=self._font_small,
-                            bg=cfg.BG_SECONDARY, fg=cfg.FG_COLOR)
-            name.pack(side='left')
-
-            canvas = tk.Canvas(cell, width=cfg.USAGE_GAUGE_W, height=cfg.USAGE_GAUGE_H,
-                               bg=cfg.BG_SECONDARY, highlightthickness=0, bd=0)
-            canvas.pack(side='left', padx=2)
-            canvas.create_rectangle(0, 0, cfg.USAGE_GAUGE_W, cfg.USAGE_GAUGE_H,
-                                    fill=cfg.USAGE_TRACK_COLOR, outline="")
-            fill = canvas.create_rectangle(0, 0, 0, cfg.USAGE_GAUGE_H,
-                                           fill=cfg.FG_DIM, outline="")
-            # Pace marker drawn last so it sits on top of the fill; hidden until known.
-            pace = canvas.create_line(0, 0, 0, cfg.USAGE_GAUGE_H,
-                                      fill=cfg.USAGE_PACE_COLOR, width=1, state='hidden')
-
-            pct = tk.Label(cell, text="--", font=self._font_small, bg=cfg.BG_SECONDARY,
-                           fg=cfg.FG_DIM, width=4, anchor='w')
-            pct.pack(side='left')
-
-            self._usage_cells[key] = {"name": name, "canvas": canvas,
-                                      "fill": fill, "pace": pace, "pct": pct}
+            cell, gauge = self._make_gauge_cell(frame, label, readout_width=4)
+            cell.pack(side='left', expand=True, fill='both', padx=(4, 0))
+            self._usage_cells[key] = gauge
 
         self._usage_interval_ms = cfg.USAGE_POLL_INTERVAL_MS
         self._poll_claude_usage()
@@ -490,54 +509,43 @@ class PowerWidget(tk.Toplevel):
     def _poll_claude_usage(self):
         """Kick a background usage fetch, then reschedule at the current interval
         (which backs off while rate-limited)."""
-        def _on_result(metrics, status, spend_text):
+        def _on_result(metrics, status, spend):
             try:
-                self.after(0, lambda: self._on_usage_result(metrics, status, spend_text))
+                self.after(0, lambda: self._on_usage_result(metrics, status, spend))
             except Exception:
                 pass
 
         fetch_claude_usage(_on_result)
         self.after(self._usage_interval_ms, self._poll_claude_usage)
 
-    def _on_usage_result(self, metrics, status, spend_text):
-        """Apply a fetch result: update gauges + the bottom-left spend readout on
-        success, otherwise keep the last-good values (never blank on a transient
-        failure) and back off the poll interval when the endpoint rate-limits us."""
+    def _on_usage_result(self, metrics, status, spend):
+        """Apply a fetch result: update the usage gauges + the status-bar extra
+        gauge/spend on success, otherwise keep the last-good values (never blank on
+        a transient failure) and back off the interval when rate-limited.
+
+        spend is (used_percent, "$used / $cap") or None."""
         if status == "ok" and metrics is not None:
             self._usage_interval_ms = cfg.USAGE_POLL_INTERVAL_MS  # recovered — reset backoff
             self._update_usage(metrics)
-            if spend_text:
-                self._status_label.configure(text=spend_text)  # bottom-left = extra $used/$cap
+            if spend is not None:
+                try:
+                    self._render_gauge(self._credits_cell, spend[0], None, spend[1])
+                except tk.TclError:
+                    pass
         elif status == "rate_limited":
             self._usage_interval_ms = min(self._usage_interval_ms * 2,
                                           cfg.USAGE_MAX_POLL_INTERVAL_MS)
-        # "error" (network/token): keep last-good gauges + spend text, leave interval as-is
+        # "error" (network/token): keep last-good gauges + spend, leave interval as-is
 
     def _update_usage(self, results):
-        """Redraw each gauge fill, pace marker, and readout from fetched results."""
+        """Redraw each usage gauge from fetched (key, label, pct, pace, text) tuples."""
         for key, label, pct, pace, text in results:
             cell = self._usage_cells.get(key)
             if not cell:
                 continue
             try:
                 cell["name"].configure(text=label)
-                canvas = cell["canvas"]
-                if pct is None:
-                    canvas.coords(cell["fill"], 0, 0, 0, cfg.USAGE_GAUGE_H)
-                    canvas.itemconfigure(cell["pace"], state='hidden')
-                    cell["pct"].configure(text="--", fg=cfg.FG_DIM)
-                else:
-                    p = max(0.0, min(100.0, float(pct)))
-                    color = _usage_color(p)
-                    canvas.coords(cell["fill"], 0, 0, cfg.USAGE_GAUGE_W * p / 100.0, cfg.USAGE_GAUGE_H)
-                    canvas.itemconfigure(cell["fill"], fill=color)
-                    cell["pct"].configure(text=text if text is not None else f"{int(round(p))}%", fg=color)
-                    if pace is None:
-                        canvas.itemconfigure(cell["pace"], state='hidden')
-                    else:
-                        x = cfg.USAGE_GAUGE_W * max(0.0, min(100.0, float(pace))) / 100.0
-                        canvas.coords(cell["pace"], x, 0, x, cfg.USAGE_GAUGE_H)
-                        canvas.itemconfigure(cell["pace"], state='normal')
+                self._render_gauge(cell, pct, pace, text)
             except tk.TclError:
                 pass
 
