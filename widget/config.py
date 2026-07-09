@@ -59,9 +59,13 @@ STATUS_COLORS = {
     "unknown": "#6c7086",              # dim - can't reach
 }
 
-# Claude usage stats (the /usage session / week / Fable numbers)
-USAGE_POLL_INTERVAL_MS = 60000  # once per minute
-USAGE_MAX_POLL_INTERVAL_MS = 600000  # backoff cap (10 min) when rate-limited
+# Claude usage stats (the /usage session / week / Fable numbers).
+# This is the SUBSCRIPTION usage surface (OAuth token), which Anthropic says to
+# check SPARINGLY: frequent polling trips its rate limit (429) and can consume a
+# small % of the 5-hour session limit. Session is a 5h window and weekly is 7d,
+# so a slow poll loses nothing visually. Do NOT drop this below a few minutes.
+USAGE_POLL_INTERVAL_MS = 900000  # every 15 minutes
+USAGE_MAX_POLL_INTERVAL_MS = 1800000  # backoff cap (30 min) when rate-limited
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 USAGE_OAUTH_BETA = "oauth-2025-04-20"
 CREDENTIALS_PATH = "~/.claude/.credentials.json"  # OAuth token read fresh each poll
