@@ -459,7 +459,7 @@ class PowerWidget(tk.Toplevel):
             cell.pack(side='left', expand=True, fill='both', padx=(6, 0))
 
             name = tk.Label(cell, text=label, font=self._font_small,
-                            bg=cfg.BG_SECONDARY, fg=cfg.FG_DIM)
+                            bg=cfg.BG_SECONDARY, fg=cfg.FG_COLOR)
             name.pack(side='left')
 
             canvas = tk.Canvas(cell, width=cfg.USAGE_GAUGE_W, height=cfg.USAGE_GAUGE_H,

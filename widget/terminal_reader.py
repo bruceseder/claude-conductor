@@ -56,7 +56,10 @@ def _read_lines_from_tc(tc, last_n):
         return None
     text_pattern = tp.QueryInterface(IUIAutomationTextPattern)
     doc = text_pattern.DocumentRange
-    # Read the full buffer (-1 = unlimited, typically < 1MB, ~10ms)
+    # GetText(-1) reads the whole DocumentRange. Measured 2026-07-09: for
+    # Windows Terminal that's only ~the visible screen (~34 lines, sub-ms),
+    # NOT the full scrollback — so GetVisibleRanges()/last-N-range tricks give
+    # no speedup here (the last-N variant measured slower). Don't re-chase this.
     text = doc.GetText(-1)
     lines = text.strip().split('\n')
     return lines[-last_n:]
