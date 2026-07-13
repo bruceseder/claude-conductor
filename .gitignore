@@ -4,3 +4,4 @@ __pycache__/
 .env
 .venv/
 comtypes/gen/
+power_widget.log*

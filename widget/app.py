@@ -2,6 +2,7 @@ import os
 import tkinter as tk
 
 from . import config as cfg
+from .utils import debug_log
 from .window_manager import WindowManager
 from .monitor_manager import MonitorManager
 from .tiling import calculate_layout, distribute_across_monitors
@@ -33,7 +34,7 @@ class App:
             on_tile=self._on_tile,
             on_minimize_all=self._on_minimize_all,
             on_restore_all=self._on_restore_all,
-            on_refresh=self._refresh,
+            on_refresh=self._request_refresh,
             on_monitor_change=self._on_monitor_change,
             on_close=self.shutdown,
         )
@@ -45,7 +46,7 @@ class App:
         self._widget.setup_keybindings(lambda: self._window_mgr.windows)
 
         # Start refresh loop
-        self._refresh_after_id = self._root.after(500, self._refresh)
+        self._schedule_refresh(500)
 
     def _exclude_self(self):
         try:
@@ -55,8 +56,32 @@ class App:
         except Exception:
             pass
 
+    def _schedule_refresh(self, delay_ms):
+        """Schedule exactly one pending refresh, cancelling any already queued.
+
+        All refresh triggers — the periodic loop, the refresh button, and the
+        post-action refreshes after tiling/minimize/restore — route through here
+        so there is only ever a single refresh loop. Independent after() chains
+        would multiply polling and double-count tracked time (each cycle adds a
+        flat refresh_secs regardless of how much wall-clock actually elapsed).
+        """
+        if self._shutting_down:
+            return
+        if self._refresh_after_id is not None:
+            try:
+                self._root.after_cancel(self._refresh_after_id)
+            except Exception:
+                pass
+        self._refresh_after_id = self._root.after(delay_ms, self._refresh)
+
+    def _request_refresh(self):
+        """Immediate user-triggered refresh (refresh button), folded into the
+        single loop rather than spawning a parallel one."""
+        self._schedule_refresh(0)
+
     def _refresh(self):
-        """Enumerate windows and update the UI."""
+        """Enumerate windows and update the UI, then reschedule the single loop."""
+        self._refresh_after_id = None  # the scheduled callback has now fired
         if self._shutting_down:
             return
         try:
@@ -72,8 +97,8 @@ class App:
             self._time_tracker.update(windows, refresh_secs=cfg.REFRESH_INTERVAL_MS // 1000)
             self._widget.update_window_list(windows, self._time_tracker)
         except Exception:
-            pass
-        self._refresh_after_id = self._root.after(cfg.REFRESH_INTERVAL_MS, self._refresh)
+            debug_log("_refresh")
+        self._schedule_refresh(cfg.REFRESH_INTERVAL_MS)
 
     def _on_focus(self, hwnd):
         self._window_mgr.focus_window(hwnd)
@@ -103,15 +128,15 @@ class App:
             self._window_mgr.move_and_resize(hwnd, x, y, w, h)
 
         # Refresh after tiling
-        self._root.after(300, self._refresh)
+        self._schedule_refresh(300)
 
     def _on_minimize_all(self):
         self._window_mgr.minimize_all()
-        self._root.after(300, self._refresh)
+        self._schedule_refresh(300)
 
     def _on_restore_all(self):
         self._window_mgr.restore_all()
-        self._root.after(300, self._refresh)
+        self._schedule_refresh(300)
 
     def _on_monitor_change(self, value):
         self._selected_monitor = value

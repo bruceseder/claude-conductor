@@ -52,6 +52,7 @@ class PowerWidget(tk.Toplevel):
         self._pulse_phase = 0.0
         self._pulse_rows = {}  # hwnd -> (row_frame, label, dot_canvas, dot_oval)
         self._pulse_running = False
+        self._pulse_after_id = None  # the single pending _animate_pulse callback
         self._border_pulsing = set()  # hwnds with active border pulse
         self._last_border_color = {}  # hwnd -> last hex color sent to DWM
         self._border_frame_count = 0
@@ -304,21 +305,36 @@ class PowerWidget(tk.Toplevel):
         return btn
 
     def _rebuild_monitor_menu(self):
-        menu = tk.Menu(self._monitor_menu, tearoff=0,
-                       bg=cfg.BUTTON_BG, fg=cfg.FG_COLOR,
-                       activebackground=cfg.ACCENT_COLOR,
-                       activeforeground=cfg.BG_COLOR,
-                       font=self._font_small)
+        """Populate the monitor dropdown, reusing a single tk.Menu.
+
+        update_monitors() calls this every ~30s; creating a fresh tk.Menu each
+        time (and only re-pointing the Menubutton at it) orphans the old menu,
+        which stays a child of the Menubutton and leaks a Windows USER object per
+        rebuild. Instead we build the menu once and repopulate it in place, and
+        skip the work entirely when the monitor list hasn't changed.
+        """
+        names = [m.name for m in self._monitors]
+        if names == getattr(self, '_monitor_menu_names', None):
+            return
+        self._monitor_menu_names = names
+
+        menu = getattr(self, '_monitor_dropdown', None)
+        if menu is None:
+            menu = tk.Menu(self._monitor_menu, tearoff=0,
+                           bg=cfg.BUTTON_BG, fg=cfg.FG_COLOR,
+                           activebackground=cfg.ACCENT_COLOR,
+                           activeforeground=cfg.BG_COLOR,
+                           font=self._font_small)
+            self._monitor_dropdown = menu
+            self._monitor_menu.configure(menu=menu)
+        else:
+            menu.delete(0, 'end')
 
         menu.add_command(label="All", command=lambda: self._set_monitor("All"))
         menu.add_command(label="Distribute", command=lambda: self._set_monitor("Distribute"))
         menu.add_separator()
-
-        for m in self._monitors:
-            name = m.name
+        for name in names:
             menu.add_command(label=name, command=lambda n=name: self._set_monitor(n))
-
-        self._monitor_menu.configure(menu=menu)
 
     def _set_monitor(self, value):
         self._monitor_var.set(value)
@@ -722,12 +738,17 @@ class PowerWidget(tk.Toplevel):
 
             self._window_rows.append((win.hwnd, row))
 
-        # Start or stop pulse animation (drives both list-row glow and DWM borders)
+        # Start or stop pulse animation (drives both list-row glow and DWM borders).
+        # Only kick a fresh chain when none is already pending: if a callback is
+        # still queued (rows briefly drained then reappeared before it fired), it
+        # resumes the chain once it sees _pulse_running back on — starting another
+        # here would leave two chains running at once (double pulse rate).
         has_pulse = bool(self._pulse_rows or self._border_states)
-        if has_pulse and not self._pulse_running:
+        if has_pulse:
             self._pulse_running = True
-            self._animate_pulse()
-        elif not has_pulse:
+            if self._pulse_after_id is None:
+                self._animate_pulse()
+        else:
             self._pulse_running = False
 
         # (Bottom-left status label now shows extra-usage spend, set by the usage
@@ -750,6 +771,7 @@ class PowerWidget(tk.Toplevel):
         Borders pulse for all three states: working -> electric blue,
         choice -> HDR orange, idle -> HDR green.
         """
+        self._pulse_after_id = None  # this callback has now fired
         if not self._pulse_running or (not self._pulse_rows and not self._border_states):
             self._pulse_running = False
             # Reset any lingering border colors
@@ -798,7 +820,7 @@ class PowerWidget(tk.Toplevel):
                     self._last_border_color[hwnd] = cache_key
                 self._border_pulsing.add(hwnd)
 
-        self.after(cfg.PULSE_INTERVAL_MS, self._animate_pulse)
+        self._pulse_after_id = self.after(cfg.PULSE_INTERVAL_MS, self._animate_pulse)
 
     def _animate_bolt(self):
         """Pulse the minimized restore tab bolt in the color of the current aggregate state."""

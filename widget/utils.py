@@ -1,16 +1,51 @@
 import ctypes
 import ctypes.wintypes
 import json
+import logging
 import os
 import threading
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 import win32gui
 import win32con
 import pywintypes
 
 from . import config as cfg
+
+
+_LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'power_widget.log')
+
+# Rotating so a persistent every-2s failure can't grow the log without bound:
+# capped at ~1 MB total (512 KB active + one 512 KB backup). delay=True means the
+# file isn't created until the first error, so "log absent" still reads as a
+# clean run. Handler setup is guarded — a logging failure must never break the
+# widget.
+_logger = logging.getLogger("power_widget")
+_logger.setLevel(logging.ERROR)
+_logger.propagate = False
+try:
+    if not _logger.handlers:
+        _handler = RotatingFileHandler(_LOG_FILE, maxBytes=512 * 1024,
+                                       backupCount=1, encoding="utf-8", delay=True)
+        _handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        _logger.addHandler(_handler)
+except Exception:
+    pass
+
+
+def debug_log(context):
+    """Log an exception traceback to the rotating power_widget.log.
+
+    The widget runs under pythonw (no console), so an exception swallowed by a
+    broad `except` is otherwise invisible. Call from inside an `except` block.
+    Best-effort: never raises.
+    """
+    try:
+        _logger.error(context, exc_info=True)
+    except Exception:
+        pass
 
 
 def setup_dpi_awareness():
