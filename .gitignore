@@ -5,3 +5,11 @@ __pycache__/
 .venv/
 comtypes/gen/
 power_widget.log*
+
+# runtime data (per-machine, regenerated)
+claude_time.json
+# stray screenshot artifact
+network.png
+# shim build outputs
+shim/build/
+shim/dist/
