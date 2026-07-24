@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **Minimized restore tab** now has its own README section covering the aggregate
+  bolt states, the priority order, and the implementation details (dedicated
+  12fps pulse loop, faked border under `overrideredirect`, alpha-staged reveal).
+- **Agent Teams modules** (`session_manager.py`, `wt_integration.py`,
+  `shim_server.py`, `shim/`, `launch_team.py`) are now listed in the project
+  structure and described in an "Experimental" section that states plainly they
+  are not imported by the running application.
+
 ## [0.9.0] - 2026-07-24
 
 First tagged release. Everything below is the state of the widget as used daily.

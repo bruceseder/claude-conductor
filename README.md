@@ -40,6 +40,27 @@ The detection works by:
 
 Window borders pulse using the Windows 11 DWM API (`DwmSetWindowAttribute` with `DWMWA_BORDER_COLOR`), throttled to avoid flicker.
 
+### Minimized Restore Tab
+
+The widget is meant to live out of the way, so minimizing it shouldn't cost you the thing it exists to tell you. Press `Esc` or the title-bar minimize button and the widget hides itself, leaving a 40×100 tab pinned to the right edge of your primary monitor, vertically centered and always on top. The tab shows a large ⚡ bolt above a small `CC` label. Clicking anywhere on it restores the widget.
+
+The bolt is not decorative — it pulses in the **aggregate** state across every tracked session, so a glance at the screen edge tells you whether anything wants you:
+
+| Bolt color | Means |
+|-----------|-------|
+| Orange | At least one session is waiting on a decision — go look now |
+| Blue | Nothing is blocked, but at least one session is still working |
+| Green | Everything is idle — all sessions are done and waiting on you |
+
+Priority runs highest-urgency-wins, the same order as the per-row colors: a single session needing a decision turns the bolt orange no matter how many others are busy or idle. The aggregate is recomputed on every 2-second refresh from the same window list that drives the rows, so the tab never disagrees with the expanded widget.
+
+Implementation notes:
+
+- The pulse runs in its own `_animate_bolt` loop at `PULSE_INTERVAL_MS` (80ms, ~12fps), independent of the row-pulse loop, interpolating between the state's base and bright colors on a sine wave. It reads `_bolt_state` fresh each frame, so a state change shows up within one tick rather than waiting for a rebuild.
+- The loop self-terminates the moment the widget is restored (it checks `_minimized` on entry and drops the running flag), so no animation work continues behind a restored widget.
+- The tab is an `overrideredirect` Toplevel, which strips the native frame and therefore rules out DWM border coloring. The border is faked instead: the Toplevel's own background shows through 3px of padding around a dark content frame, and the pulse loop colors that background — giving the tab a pulsing outline as well as a pulsing bolt.
+- It's created at `alpha 0.0` and raised to `0.92` only after geometry is flushed, which avoids the upper-left flash Windows otherwise shows when positioning a new Toplevel.
+
 ### Window Management
 
 - **Click to focus**: Click any window in the list to bring it to the foreground (uses `AttachThreadInput` workaround for Windows focus restrictions)
@@ -154,10 +175,24 @@ claude-conductor/
 │   ├── time_tracker.py      # Per-project time tracking (by working directory)
 │   ├── tiling.py            # Layout algorithms (grid, h-split, v-split, cascade)
 │   ├── config.py            # Constants, colors, detection patterns
-│   └── utils.py             # Win32 helpers, DPI, color lerp, DWM border API
+│   ├── utils.py             # Win32 helpers, DPI, color lerp, DWM border API
+│   │
+│   │                        # --- Experimental: Agent Teams (not wired in) ---
+│   ├── session_manager.py   # Team session / pane lifecycle and metadata
+│   ├── wt_integration.py    # Windows Terminal pane splitting and keystroke send
+│   └── shim_server.py       # Named-pipe server for the tmux shim
+├── shim/                    # tmux-compatible shim executable + pane relay
+├── launch_team.py           # Team launcher entry point (experimental)
+├── AGENT_TEAMS_ENHANCEMENT.md  # Design notes for the above
 ├── requirements.txt
 └── .gitignore
 ```
+
+### Experimental: Agent Teams
+
+The repository also carries an in-progress **Agent Teams** effort — an attempt to let Claude Code drive multi-agent sessions on Windows by presenting a tmux-compatible interface backed by Windows Terminal panes. A shim binary answers `tmux` commands, forwards them over a named pipe (`\\.\pipe\claude-conductor`) to a server thread inside Conductor, which then splits real Windows Terminal panes and relays keystrokes to them.
+
+**This is not part of the shipped widget.** None of these modules are imported by `app.py`, nothing in the running application touches them, and the launcher is not wired to the UI. They are committed because the work is real and in progress, not because they're ready to use. Running the widget neither starts the pipe server nor creates panes. Treat the design notes as a sketch of intent rather than documentation of behavior, and expect the interfaces to change or be removed.
 
 ## Known Issues
 
