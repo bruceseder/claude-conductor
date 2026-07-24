@@ -15,7 +15,8 @@ Claude Conductor is a compact, always-on-top floating widget that:
 
 - **Lists all your Claude windows** in one place (non-Claude terminals are filtered out)
 - **Pulses orange** when Claude needs a decision from you (yes/no, 1/2/3 choices, tool approvals)
-- **Pulses teal-green** when Claude is done and waiting for your next instruction
+- **Pulses blue** while Claude is actively working
+- **Pulses green** when Claude is done and waiting for your next instruction
 - **Pulses the actual window border** so you can spot which window needs you even without the widget
 - **Tiles and arranges** windows across multiple monitors with one click
 - **Tracks time per project** so you know how much Claude is working on each codebase
@@ -28,13 +29,13 @@ The signature feature. Claude Conductor reads the terminal text of each window u
 
 | State | Widget Color | Border Color | Meaning |
 |-------|-------------|-------------|---------|
-| Working | No pulse | Default | Claude is actively processing (spinner in title) |
 | Needs decision | Orange pulse | Orange pulse | Claude is asking yes/no, 1/2/3, or needs tool approval |
-| Done / idle | Teal-green pulse | Teal-green pulse | Claude finished, waiting for your next instruction |
+| Working | Blue pulse | Blue pulse | Claude is actively processing a request or tool call |
+| Done / idle | Green pulse | Green pulse | Claude finished, waiting for your next instruction |
 
 The detection works by:
-- **Spinner detection**: Braille characters (U+2800-U+28FF) in the window title mean Claude is actively working. The static sparkle (U+2733) means Claude is present but idle.
-- **Terminal text analysis**: Reads the terminal buffer via UI Automation and looks for patterns like "Esc to cancel" (choice UI), bare `>` prompt (idle), or `●` (done).
+- **Terminal text analysis**: Reads the terminal buffer via UI Automation and matches footer patterns — `Esc to cancel` (a choice is on screen), `Esc to interrupt` (actively working), or a bare `>` prompt / trailing `●` (idle). Choice wins over working, and working over idle, so a session asking a question never reads as merely busy.
+- **Why not the title spinner**: the braille spinner (U+2800-U+28FF) in the window title is an unreliable working signal — it can disappear during tool calls — so the terminal footer is authoritative.
 - **TUI prompt detection**: When the terminal text doesn't match known patterns but Claude has stopped working, it defaults to orange (likely a permission/tool approval prompt rendered as a TUI overlay).
 
 Window borders pulse using the Windows 11 DWM API (`DwmSetWindowAttribute` with `DWMWA_BORDER_COLOR`), throttled to avoid flicker.
@@ -167,7 +168,7 @@ claude-conductor/
 
 ## Status
 
-Early release — actively being developed. Core features work but edge cases in attention detection are still being refined.
+**v0.9.0** — in daily use and stable, but pre-1.0 while edge cases in attention detection are still being refined (see Known Issues). See the [changelog](CHANGELOG.md) for what changed.
 
 ## License
 

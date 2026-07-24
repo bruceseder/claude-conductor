@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-24
+
+First tagged release. Everything below is the state of the widget as used daily.
+
 ### Fixed
 
 - **Monitor-menu resource leak.** `_rebuild_monitor_menu` created a new `tk.Menu`
@@ -35,3 +39,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Because the widget runs under `pythonw` (no console), failures were previously
   invisible; the file is only created on the first error, so its absence still
   means a clean run. The log is gitignored.
+- **Live usage-stats gauges.** A compact row of mini-gauges mirroring `/usage`:
+  5-hour session, weekly (all models), weekly (most-capable model), and an extra-
+  usage credits gauge showing `$used / $cap` on the status row. Each fills
+  green → amber → red by utilization and carries a red pace marker at the
+  wall-clock-linear position. Polled every 15 minutes against Anthropic's OAuth
+  usage endpoint, with 429 backoff and last-good retention.
+- **Minimized restore tab.** A right-edge tab with a pulsing bolt whose color
+  reflects aggregate state across all sessions (orange = something needs a
+  decision, blue = something is working, green = all idle), so the widget stays
+  useful while collapsed.
+- **Claude service status indicators.** Code / API / Web dots polled from
+  `status.claude.com` every 60 seconds.
+
+### Changed
+
+- **Three-state color language.** Working is now an electric-blue pulse rather
+  than no pulse at all, applied consistently across row colors, window borders,
+  and the restore-tab bolt. Working detection moved from the window-title braille
+  spinner to the terminal's `Esc to interrupt` footer, which does not drop out
+  during tool calls.
+
+[Unreleased]: https://github.com/bruceseder/claude-conductor/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/bruceseder/claude-conductor/releases/tag/v0.9.0
