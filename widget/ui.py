@@ -29,6 +29,21 @@ def _fmt_time(seconds):
     return f"{m}m"
 
 
+def _fit_text(text, font, max_w):
+    """Truncate text with an ellipsis so it fits max_w pixels."""
+    if font.measure(text) <= max_w:
+        return text
+    while text and font.measure(text + "…") > max_w:
+        text = text[:-1]
+    return text + "…"
+
+
+# Horizontal center of each background strip, as a fraction of row width. The
+# pulse phase is lagged by this, which is what makes the glow roll rightward.
+_STRIP_FRACS = tuple((i + 0.5) / cfg.PULSE_SWEEP_STRIPS
+                     for i in range(cfg.PULSE_SWEEP_STRIPS))
+
+
 class PowerWidget(tk.Toplevel):
     def __init__(self, master, monitors, on_focus, on_tile, on_minimize_all,
                  on_restore_all, on_refresh, on_monitor_change, on_close=None):
@@ -50,7 +65,8 @@ class PowerWidget(tk.Toplevel):
         self._window_rows = []
         self._monitors = monitors
         self._pulse_phase = 0.0
-        self._pulse_rows = {}  # hwnd -> (row_frame, label, dot_canvas, dot_oval)
+        self._row_info = {}    # hwnd -> row render info (see _make_row)
+        self._pulse_rows = {}  # hwnd -> the same info, for pulsing rows only
         self._pulse_running = False
         self._pulse_after_id = None  # the single pending _animate_pulse callback
         self._border_pulsing = set()  # hwnds with active border pulse
@@ -639,104 +655,16 @@ class PowerWidget(tk.Toplevel):
                 del self._last_border_color[hwnd]
 
         self._pulse_rows = {}
+        self._row_info = {}
 
         for i, win in enumerate(windows):
-            row = tk.Frame(self._inner_frame, bg=cfg.BG_COLOR, height=cfg.ROW_HEIGHT)
-            row.pack(fill='x', pady=1)
-            row.pack_propagate(False)
-
-            # Color based on state: choice -> orange, idle/done -> green,
-            # working -> electric blue (matches the bolt and window borders).
-            if win.needs_attention and win.attention_type == 'choice':
-                base_color = cfg.ATTENTION_COLOR
-            elif win.needs_attention:
-                base_color = cfg.IDLE_COLOR
-            elif win.is_claude:
-                base_color = cfg.WORKING_COLOR
-            else:
-                base_color = cfg.FG_DIM
-
-            dot = tk.Canvas(row, width=12, height=12, bg=cfg.BG_COLOR,
-                           highlightthickness=0)
-            dot.pack(side='left', padx=(8, 4), pady=0)
-            dot_oval = dot.create_oval(2, 2, 10, 10, fill=base_color, outline='')
-
-            # Title (use nickname if set)
-            raw_title = win.display_title or win.title
-            nickname = self._get_nickname(win.hwnd, raw_title)
-            title = nickname or raw_title
-            if len(title) > 38:
-                title = title[:36] + "\u2026"
-
-            fg = base_color if win.needs_attention else cfg.FG_COLOR
-            lbl = tk.Label(row, text=title, font=self._font_bold if win.needs_attention else self._font,
-                          bg=cfg.BG_COLOR, fg=fg, anchor='w')
-            lbl.pack(side='left', fill='x', expand=True, padx=(0, 4))
-
-            # Track non-main labels so the pulse loop can update their bg
-            # without iterating winfo_children() at every frame.
-            extra_labels = []
-
-            # Attention indicator with type hint
-            if win.needs_attention:
-                indicator = "\u2753" if win.attention_type == 'choice' else "\u2713"  # ? vs checkmark
-                attn_lbl = tk.Label(row, text=indicator, font=self._font_small,
-                                    bg=cfg.BG_COLOR, fg=base_color)
-                attn_lbl.pack(side='right', padx=2)
-                extra_labels.append(attn_lbl)
-
-            # Minimized indicator
-            if win.is_minimized:
-                min_lbl = tk.Label(row, text="\u2500", font=self._font_small,
-                                   bg=cfg.BG_COLOR, fg=cfg.FG_DIM)
-                min_lbl.pack(side='right', padx=4)
-                extra_labels.append(min_lbl)
-
-            # Time tracking label
-            if time_tracker:
-                secs = time_tracker.get_today_seconds(win.hwnd)
-                if secs > 0:
-                    time_lbl = tk.Label(row, text=_fmt_time(secs), font=self._font_small,
-                                        bg=cfg.BG_COLOR, fg=cfg.FG_DIM)
-                    time_lbl.pack(side='right', padx=(0, 4))
-                    extra_labels.append(time_lbl)
-
-            # Number shortcut label
-            if i < 9:
-                num_lbl = tk.Label(row, text=str(i + 1), font=self._font_small,
-                                   bg=cfg.BG_COLOR, fg=cfg.FG_DIM)
-                num_lbl.pack(side='right', padx=(0, 6))
-                extra_labels.append(num_lbl)
-
-            # Bind click to focus (label uses delayed click so double-click can rename)
-            hwnd = win.hwnd
-            raw_t = raw_title
-            for widget in [row, dot]:
-                widget.bind('<Button-1>', lambda e, h=hwnd: self._on_focus(h))
-
-            lbl.bind('<Button-1>', lambda e, h=hwnd: self._on_focus(h))
-
-            # Right-click to rename
-            raw_t = raw_title
-            lbl.bind('<Button-3>', lambda e, h=hwnd, dt=raw_t, r=row, l=lbl: self._start_rename(h, dt, r, l))
-
-            # Hover only for non-attention rows (attention rows pulse instead)
-            if not win.needs_attention:
-                for widget in [row, lbl, dot]:
-                    widget.bind('<Enter>', lambda e, r=row, l=lbl: (
-                        r.configure(bg=cfg.HOVER_COLOR),
-                        l.configure(bg=cfg.HOVER_COLOR),
-                    ))
-                    widget.bind('<Leave>', lambda e, r=row, l=lbl: (
-                        r.configure(bg=cfg.BG_COLOR),
-                        l.configure(bg=cfg.BG_COLOR),
-                    ))
-
-            # Register for pulse animation with type
-            if win.needs_attention:
-                self._pulse_rows[win.hwnd] = (row, lbl, dot, dot_oval, win.attention_type, extra_labels)
-
-            self._window_rows.append((win.hwnd, row))
+            info = self._make_row(i, win, time_tracker)
+            self._row_info[win.hwnd] = info
+            # Every Claude row pulses: choice/idle in their attention color,
+            # working in electric blue. Non-Claude rows stay static.
+            if info['state']:
+                self._pulse_rows[win.hwnd] = info
+            self._window_rows.append((win.hwnd, info['canvas']))
 
         # Start or stop pulse animation (drives both list-row glow and DWM borders).
         # Only kick a fresh chain when none is already pending: if a callback is
@@ -763,13 +691,131 @@ class PowerWidget(tk.Toplevel):
         if abs(desired_h - current_h) > 20:
             self.geometry(f'{cfg.WIDGET_WIDTH}x{desired_h}+{self._x}+{self._y}')
 
+    def _make_row(self, i, win, time_tracker):
+        """Draw one window row and return its render info.
+
+        The row is a single Canvas rather than a Frame of Labels: its background
+        is a strip of vertical bands the pulse loop recolors independently, which
+        is what lets the glow roll left-to-right. Labels can only hold one flat
+        background color, so the roll isn't expressible with them.
+        """
+        # Row width is fixed: the widget can't be resized horizontally
+        # (minsize/maxsize pin it) and the inner frame is pinned in
+        # _build_window_list.
+        row_w = cfg.WIDGET_WIDTH - 24
+        mid_y = cfg.ROW_HEIGHT // 2
+
+        row = tk.Canvas(self._inner_frame, height=cfg.ROW_HEIGHT, width=row_w,
+                        bg=cfg.BG_COLOR, highlightthickness=0, bd=0)
+        row.pack(fill='x', pady=1)
+
+        # State drives every color on the row: choice -> orange, idle/done ->
+        # green, working -> electric blue (matches the bolt and window borders).
+        if win.needs_attention:
+            state = 'choice' if win.attention_type == 'choice' else 'idle'
+        elif win.is_claude:
+            state = 'working'
+        else:
+            state = None
+        base_color = self._state_colors(state)[0] if state else cfg.FG_DIM
+
+        # Background bands, drawn first so everything else sits on top of them.
+        strips = []
+        for s in range(cfg.PULSE_SWEEP_STRIPS):
+            x0 = round(s * row_w / cfg.PULSE_SWEEP_STRIPS)
+            x1 = round((s + 1) * row_w / cfg.PULSE_SWEEP_STRIPS)
+            strips.append(row.create_rectangle(x0, 0, x1, cfg.ROW_HEIGHT,
+                                               fill=cfg.BG_COLOR, outline=''))
+
+        # Items the pulse recolors, each with the x fraction it samples the
+        # travelling wave at, so they light up in step with the band behind them.
+        glow = []
+
+        # Status dot, at the same spot the old 12px dot canvas put it.
+        glow.append((row.create_oval(10, 12, 18, 20, fill=base_color, outline=''),
+                     14 / row_w))
+
+        # Right-aligned items, laid out right-to-left in the order they used to
+        # be packed, with the same padding: (text, color, (pad_l, pad_r), glows).
+        right_items = []
+        if win.needs_attention:
+            indicator = "❓" if win.attention_type == 'choice' else "✓"  # ? vs checkmark
+            right_items.append((indicator, base_color, (2, 2), True))
+        if win.is_minimized:
+            right_items.append(("─", cfg.FG_DIM, (4, 4), False))
+        if time_tracker:
+            secs = time_tracker.get_today_seconds(win.hwnd)
+            if secs > 0:
+                right_items.append((_fmt_time(secs), cfg.FG_DIM, (0, 4), False))
+        if i < 9:
+            right_items.append((str(i + 1), cfg.FG_DIM, (0, 6), False))
+
+        right_x = row_w
+        for text, color, (pad_l, pad_r), glows in right_items:
+            right_x -= pad_r
+            item = row.create_text(right_x, mid_y, text=text, font=self._font_small,
+                                   fill=color, anchor='e')
+            text_w = self._font_small.measure(text)
+            if glows:
+                glow.append((item, (right_x - text_w / 2) / row_w))
+            right_x -= text_w + pad_l
+
+        # Title (use nickname if set), filling what the right-hand items leave.
+        raw_title = win.display_title or win.title
+        title = self._get_nickname(win.hwnd, raw_title) or raw_title
+        title_x = 24  # 8px left pad + the 12px dot + its 4px gap
+        title_w = max(20, right_x - 4 - title_x)
+        title_font = self._font_bold if win.needs_attention else self._font
+        fitted = _fit_text(title, title_font, title_w)
+        title_item = row.create_text(title_x, mid_y, text=fitted, font=title_font,
+                                     fill=base_color if win.needs_attention else cfg.FG_COLOR,
+                                     anchor='w')
+        if win.needs_attention:
+            glow.append((title_item,
+                         (title_x + title_font.measure(fitted) / 2) / row_w))
+
+        info = {'canvas': row, 'strips': strips, 'glow': glow, 'state': state,
+                'title_item': title_item, 'title_x': title_x, 'title_w': title_w,
+                'title_font': title_font, 'raw_title': raw_title}
+
+        hwnd = win.hwnd
+        row.bind('<Button-1>', lambda e, h=hwnd: self._on_focus(h))
+        # Right-click the title to rename (item binding, so only the title area)
+        row.tag_bind(title_item, '<Button-3>', lambda e, h=hwnd: self._start_rename(h))
+
+        # Hover only for rows that don't pulse — a pulsing row is already lit.
+        if not state:
+            row.bind('<Enter>', lambda e, r=info: self._paint_row(r, cfg.HOVER_COLOR))
+            row.bind('<Leave>', lambda e, r=info: self._paint_row(r, cfg.BG_COLOR))
+
+        return info
+
+    @staticmethod
+    def _paint_row(info, color):
+        """Flat-fill a row's background bands (hover / static rows)."""
+        canvas = info['canvas']
+        try:
+            for item in info['strips']:
+                canvas.itemconfigure(item, fill=color)
+        except tk.TclError:
+            pass
+
+    def _sweep_t(self, frac):
+        """Pulse level 0..1 at a horizontal position of the row.
+
+        The phase lags with distance from the left edge, so the peak reaches the
+        right side later than the left — the glow rolls across instead of fading
+        everywhere at once.
+        """
+        return (math.sin(self._pulse_phase - frac * cfg.PULSE_SWEEP_LAG) + 1.0) / 2.0
 
     def _animate_pulse(self):
-        """Pulsing glow for attention list rows AND every window's DWM border.
+        """Rolling glow for every Claude list row AND every window's DWM border.
 
-        List rows pulse only for windows that need attention (choice/idle).
-        Borders pulse for all three states: working -> electric blue,
-        choice -> HDR orange, idle -> HDR green.
+        List rows pulse in all three states, the glow rolling left-to-right.
+        Borders pulse in the same three colors but flat across the frame
+        (DWM takes one color): working -> electric blue, choice -> HDR orange,
+        idle -> HDR green.
         """
         self._pulse_after_id = None  # this callback has now fired
         if not self._pulse_running or (not self._pulse_rows and not self._border_states):
@@ -782,34 +828,44 @@ class PowerWidget(tk.Toplevel):
             return
 
         self._pulse_phase += cfg.PULSE_SPEED
-        # Sine wave: 0..1..0 smoothly
-        t = (math.sin(self._pulse_phase) + 1.0) / 2.0
 
         # Only update DWM borders every 6th frame (~300ms) to avoid flicker
         self._border_frame_count += 1
         update_borders = (self._border_frame_count % 6) == 0
 
-        # List-row glow — attention rows only. Skip the per-row Tk reconfigures
-        # while minimized: the rows are hidden behind the restore tab, so only
-        # the DWM borders (below) are visible. The bolt loop handles the tab.
+        # List-row glow. Skip the per-row Tk reconfigures while minimized: the
+        # rows are hidden behind the restore tab, so only the DWM borders
+        # (below) are visible. The bolt loop handles the tab.
         if not self._minimized:
-            for hwnd, (row, lbl, dot_canvas, dot_oval, atype, extras) in self._pulse_rows.items():
-                color_main, color_bright, color_dim = self._state_colors(atype)
-                bg = lerp_color(cfg.BG_COLOR, color_dim, t)
-                glow = lerp_color(color_main, color_bright, t)
+            # The band colors depend only on state and strip position, so build
+            # one palette per state per frame and share it across every row.
+            palettes = {}
+            for info in self._pulse_rows.values():
+                state = info['state']
+                if state not in palettes:
+                    color_main, color_bright, color_dim = self._state_colors(state)
+                    palettes[state] = (
+                        [lerp_color(cfg.BG_COLOR, color_dim, self._sweep_t(f))
+                         for f in _STRIP_FRACS],
+                        color_main, color_bright,
+                    )
+                bands, color_main, color_bright = palettes[state]
+                canvas = info['canvas']
                 try:
-                    row.configure(bg=bg)
-                    lbl.configure(bg=bg, fg=glow)
-                    dot_canvas.configure(bg=bg)
-                    dot_canvas.itemconfigure(dot_oval, fill=glow)
-                    for child in extras:
-                        child.configure(bg=bg)
+                    for item, color in zip(info['strips'], bands):
+                        canvas.itemconfigure(item, fill=color)
+                    for item, frac in info['glow']:
+                        canvas.itemconfigure(
+                            item, fill=lerp_color(color_main, color_bright,
+                                                  self._sweep_t(frac)))
                 except tk.TclError:
                     pass
 
         # Pulse the actual window border + title bar via DWM (throttled), one
         # color per state across every Claude window.
         if update_borders:
+            # Sine wave: 0..1..0 smoothly, unlagged — a border is one flat color.
+            t = (math.sin(self._pulse_phase) + 1.0) / 2.0
             for hwnd, state in self._border_states.items():
                 color_main, color_bright, color_dim = self._state_colors(state)
                 border_color = lerp_color(color_main, color_bright, t)
@@ -885,43 +941,51 @@ class PowerWidget(tk.Toplevel):
             del self._nicknames[hwnd]
         return None
 
-    def _start_rename(self, hwnd, display_title, row, lbl):
-        """Replace the title label with an Entry for inline editing."""
-        if self._editing_hwnd is not None:
+    def _start_rename(self, hwnd):
+        """Hide the title text item and float an Entry over it for inline editing."""
+        info = self._row_info.get(hwnd)
+        if info is None or self._editing_hwnd is not None:
             return
         self._editing_hwnd = hwnd
 
+        row = info['canvas']
+        title_item = info['title_item']
+        display_title = info['raw_title']
         current = self._get_nickname(hwnd, display_title) or display_title
-        lbl.pack_forget()
+        row.itemconfigure(title_item, state='hidden')
 
         entry = tk.Entry(row, font=self._font, bg=cfg.BUTTON_BG, fg=cfg.FG_COLOR,
                          insertbackground=cfg.FG_COLOR, relief='flat',
                          selectbackground=cfg.ACCENT_COLOR)
         entry.insert(0, current)
         entry.select_range(0, 'end')
-        entry.pack(side='left', fill='x', expand=True, padx=(0, 4))
+        entry_id = row.create_window(info['title_x'], cfg.ROW_HEIGHT // 2, window=entry,
+                                     anchor='w', width=info['title_w'],
+                                     height=cfg.ROW_HEIGHT - 8)
         entry.focus_set()
+
+        def close_entry():
+            row.delete(entry_id)
+            entry.destroy()
+            row.itemconfigure(title_item, state='normal')
+            self._editing_hwnd = None
 
         def finish(event=None):
             new_name = entry.get().strip()
-            entry.destroy()
-            lbl.pack(side='left', fill='x', expand=True, padx=(0, 4))
-            self._editing_hwnd = None
+            close_entry()
 
             if new_name and new_name != display_title:
                 self._nicknames[hwnd] = (new_name, display_title)
-                nick_display = new_name if len(new_name) <= 38 else new_name[:36] + "\u2026"
-                lbl.configure(text=nick_display)
-            elif not new_name or new_name == display_title:
+                shown = new_name
+            else:
                 # Clear nickname
                 self._nicknames.pop(hwnd, None)
-                title_display = display_title if len(display_title) <= 38 else display_title[:36] + "\u2026"
-                lbl.configure(text=title_display)
+                shown = display_title
+            row.itemconfigure(title_item,
+                              text=_fit_text(shown, info['title_font'], info['title_w']))
 
         def cancel(event=None):
-            entry.destroy()
-            lbl.pack(side='left', fill='x', expand=True, padx=(0, 4))
-            self._editing_hwnd = None
+            close_entry()
 
         entry.bind('<Return>', finish)
         entry.bind('<Escape>', cancel)

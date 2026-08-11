@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The row pulse now rolls left to right.** Instead of the whole row brightening
+  and dimming in place, the glow sweeps in from the left edge, lights the full
+  row in the state color, then drains off the right. Rows are now drawn as a
+  single `Canvas` painting `PULSE_SWEEP_STRIPS` (20) vertical bands rather than a
+  `Frame` of `Label`s — a label background can only hold one flat color, so the
+  roll wasn't expressible with the old structure. Each band samples the same sine
+  wave with its phase lagged by distance from the left edge
+  (`PULSE_SWEEP_LAG`, 2.4 rad end to end); set that to `0` for the previous
+  uniform pulse. Measured at 9.5ms per frame with 12 pulsing rows, against the
+  80ms frame budget. Window borders still pulse flat, since DWM takes one color
+  per window.
+- **Working (blue) rows now pulse in the widget list.** Previously only their
+  window border pulsed and the row sat static; the row itself now carries the
+  blue pulse and roll like the orange and green states. Consequently the hover
+  highlight no longer applies to working rows — a pulsing row is already lit —
+  and remains only on non-Claude rows.
+- Row text is now fitted to the pixel width left by the time/index/indicator
+  items rather than truncated at a fixed 38 characters, and inline rename floats
+  an `Entry` over the row canvas in place of the hidden title item.
+
 ### Documentation
 
 - **Minimized restore tab** now has its own README section covering the aggregate

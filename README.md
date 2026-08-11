@@ -40,6 +40,14 @@ The detection works by:
 
 Window borders pulse using the Windows 11 DWM API (`DwmSetWindowAttribute` with `DWMWA_BORDER_COLOR`), throttled to avoid flicker.
 
+#### The roll
+
+Widget rows don't just brighten and dim in place — the glow **rolls left to right**. It sweeps in from the left edge, briefly lights the whole row in the state color, then drains off the right, and repeats. Peripherally this reads as motion rather than a blink, which is easier to catch out of the corner of your eye than a row that only changes brightness.
+
+A Tk label background can hold exactly one flat color, so the roll isn't expressible with labels. Each row is therefore a single `Canvas` that paints its own background as `PULSE_SWEEP_STRIPS` vertical bands, with the status dot and all text drawn as canvas items on top. Every band samples the same sine wave, but its phase lags with distance from the left edge (`PULSE_SWEEP_LAG` radians end to end) — which is what makes the peak arrive on the right later than on the left. Set `PULSE_SWEEP_LAG = 0` in `config.py` for a flat, uniform pulse instead.
+
+Window borders keep pulsing flat, since DWM takes one color per window.
+
 ### Minimized Restore Tab
 
 The widget is meant to live out of the way, so minimizing it shouldn't cost you the thing it exists to tell you. Press `Esc` or the title-bar minimize button and the widget hides itself, leaving a 40×100 tab pinned to the right edge of your primary monitor, vertically centered and always on top. The tab shows a large ⚡ bolt above a small `CC` label. Clicking anywhere on it restores the widget.

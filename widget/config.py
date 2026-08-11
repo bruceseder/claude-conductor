@@ -103,3 +103,8 @@ CASCADE_OFFSET = 32
 # Attention pulse animation
 PULSE_INTERVAL_MS = 80  # ~12fps widget row animation
 PULSE_SPEED = 0.095  # Radians per frame; scaled with PULSE_INTERVAL_MS to keep the same wall-clock cycle
+# Left-to-right roll. Each row is painted as vertical strips whose pulse phase
+# lags with distance from the left edge, so the glow sweeps across the row and
+# drains off the right instead of fading everywhere at once.
+PULSE_SWEEP_LAG = 2.4  # Radians of lag from left edge to right edge (0 = the old uniform pulse)
+PULSE_SWEEP_STRIPS = 20  # Gradient strips per row; more is smoother but costs a redraw each
