@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Sanity check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # The app is Windows-only (pywin32, comtypes, DWM APIs). Every OS checks
+      # that all sources compile; Windows additionally installs the real deps
+      # and imports the modules that don't need a live desktop session.
+      - name: Compile all sources
+        run: python -m compileall -q .
+
+      - name: Import platform-neutral modules
+        run: python -c "import widget.config, widget.tiling, widget.session_manager"
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pip install -r requirements.txt
+
+      - name: Import Win32 modules (Windows)
+        if: runner.os == 'Windows'
+        run: python -c "import widget.utils, widget.monitor_manager, widget.time_tracker"
