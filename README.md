@@ -147,6 +147,30 @@ cd claude-conductor
 pip install pywin32 comtypes psutil
 ```
 
+## Development setup
+
+Claude Conductor is **Windows-only by design** (Win32, UI Automation and DWM APIs), so it only runs on a Windows PC. You can still edit the code from a Mac; CI compiles everything on Linux and Windows and imports the Win32 modules on Windows.
+
+**Windows** (PowerShell):
+
+```powershell
+git clone https://github.com/bruceseder/claude-conductor.git C:\code\claude-conductor
+cd C:\code\claude-conductor
+py -3.12 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python main.py
+```
+
+**macOS** (editing only; the widget won't start):
+
+```bash
+git clone https://github.com/bruceseder/claude-conductor.git ~/code/claude-conductor
+cd ~/code/claude-conductor
+python3 -m compileall -q .   # same sanity check CI runs
+```
+
+No private config files are needed. Runtime files (`claude_time.json`, `power_widget.log`, `.env`) are gitignored and never committed. There is no test suite yet; CI runs a compile and import check on Ubuntu and Windows.
+
 ## Usage
 
 ```bash
