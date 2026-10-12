@@ -1,8 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 
 
 a = Analysis(
-    ['C:\\Users\\brucethesederscom\\Dropbox\\Work\\Claude\\power-widget\\shim\\tmux.py'],
+    [os.path.join(SPECPATH, 'tmux.py')],
     pathex=[],
     binaries=[],
     datas=[],
